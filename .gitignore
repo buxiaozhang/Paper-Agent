@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境与密钥
+.env
+.env.local
+
+# 数据与产物
+data/
+*.db
+*.sqlite3
+paper_draft.docx
+.idea
