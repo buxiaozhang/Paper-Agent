@@ -3,13 +3,16 @@
 Agent 与工具实例通过闭包注入，避免将不可序列化对象放入共享状态。
 """
 
+import logging
+
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.research import ResearchAgent, ReviewerAgent, WriterAgent
 from app.graph.state import PaperState
 from app.tools.literature import LiteratureSearchTool
+from app.tools.outline import DEFAULT_SECTIONS, resolve_sections
 
-DEFAULT_SECTIONS = ["引言", "相关工作", "方法", "实验与结果", "结论"]
+logger = logging.getLogger(__name__)
 
 
 def build_graph(
@@ -23,17 +26,24 @@ def build_graph(
     def research_node(state: PaperState) -> dict:
         """研究节点：检索文献并生成研究背景。"""
         topic = state.get("topic", "")
+        logger.info("节点开始：文献检索（主题：%s）", topic)
         references = literature_tool.search(topic, limit=5)
+        logger.info("节点完成：文献检索，命中 %d 篇文献", len(references))
         researcher.run(topic, references)  # 生成背景综述（暂存于后续草稿流程）
-        return {"references": references, "status": "researching"}
+        return {"references": references, "status": "researching", "step": "文献检索"}
 
     def outline_node(state: PaperState) -> dict:
-        """大纲节点：确定标题与章节结构（可替换为 LLM 生成）。"""
+        """大纲节点：优先使用上传模板提取的大纲，未提供时回退默认大纲。"""
         topic = state.get("topic", "")
+        template_outline = state.get("template_outline")
+        logger.info("节点开始：大纲生成（模板大纲：%s）", "有" if template_outline else "无，使用默认")
+        sections = resolve_sections(template_outline)
+        logger.info("节点完成：大纲生成，共 %d 个章节", len(sections))
         return {
             "title": f"{topic}：一项基于多智能体协作的研究",
-            "sections": DEFAULT_SECTIONS,
+            "sections": sections,
             "status": "outlining",
+            "step": "大纲生成",
         }
 
     def writing_node(state: PaperState) -> dict:
@@ -41,28 +51,37 @@ def build_graph(
         topic = state.get("topic", "")
         feedback = state.get("feedback")
         sections = state.get("sections", DEFAULT_SECTIONS)
+        revision = state.get("revision_count", 0) + 1
+        logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
         parts = []
         for section in sections:
             parts.append(f"## {section}\n{writer.run(topic, section, feedback)}")
+        logger.info("节点完成：论文撰写（第 %d 轮）", revision)
         return {
             "draft": "\n\n".join(parts),
-            "revision_count": state.get("revision_count", 0) + 1,
+            "revision_count": revision,
             "status": "reviewing",
+            "step": "论文撰写",
         }
 
     def review_node(state: PaperState) -> dict:
         """评审节点：质量检查，决定通过或退回修订。"""
+        logger.info("节点开始：评审修订")
         passed, feedback = reviewer.run(state.get("topic", ""), state.get("draft", ""))
         if passed:
-            return {"feedback": "", "status": "done"}
-        return {"feedback": feedback, "status": "draft"}
+            logger.info("节点完成：评审通过")
+            return {"feedback": "", "status": "done", "step": "评审修订"}
+        logger.info("节点完成：评审未通过，退回撰写节点（意见长度：%d）", len(feedback))
+        return {"feedback": feedback, "status": "draft", "step": "评审修订"}
 
     def image_node(state: PaperState) -> dict:
         """配图节点：为论文生成示意图（通义万相预留接口）。"""
         from app.agents.image_gen import ImageAgent
 
+        logger.info("节点开始：配图生成")
         images = ImageAgent().run(state.get("topic", ""))
-        return {"images": images}
+        logger.info("节点完成：配图生成，返回 %d 条结果", len(images))
+        return {"images": images, "step": "配图生成"}
 
     def should_continue(state: PaperState) -> str:
         """条件边：评审通过或达到修订上限则进入配图，否则回到撰写节点。"""

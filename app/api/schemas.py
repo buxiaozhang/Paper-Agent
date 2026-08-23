@@ -27,3 +27,11 @@ class HealthResponse(BaseModel):
 
     status: str
     version: str
+
+
+class OutlineResponse(BaseModel):
+    """模板大纲提取结果。"""
+
+    filename: str
+    source: str            # 模板文件类型：docx / pdf
+    sections: list[str]

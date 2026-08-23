@@ -17,9 +17,11 @@ openai = ">=1.50.0,<3.0.0"
 fastapi = ">=0.115.0,<1.0.0"
 uvicorn = { extras = ["standard"], version = ">=0.30.0,<1.0.0" }
 streamlit = ">=1.38.0,<2.0.0"
+python-multipart = ">=0.0.9,<1.0.0"        # FastAPI 文件上传（multipart 表单）
 # 文档处理
 python-docx = ">=1.1.2,<2.0.0"
 docxtpl = ">=0.17.0,<1.0.0"
+pypdf = ">=4.0.0,<7.0.0"                  # PDF 解析（模板大纲提取）
 # 数据存储与缓存
 redis = ">=5.0.0,<7.0.0"
 sqlalchemy = ">=2.0.0,<3.0.0"

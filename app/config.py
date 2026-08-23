@@ -4,10 +4,20 @@
 集中管理 API Keys、Redis、数据库、ChromaDB、OSS 与通义万相等连接信息。
 """
 
+import logging
 from functools import lru_cache
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def setup_logging(level: int = logging.INFO) -> None:
+    """初始化根日志配置（幂等，可在 API / UI 入口重复调用）。"""
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 class Settings(BaseSettings):

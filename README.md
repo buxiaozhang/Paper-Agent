@@ -7,7 +7,7 @@
 - **编排框架**：LangGraph + LangChain
 - **LLM**：DeepSeek API（默认，OpenAI 兼容接口），可切换 OpenAI GPT-4o
 - **服务层**：FastAPI + Streamlit
-- **文档处理**：python-docx、docxtpl
+- **文档处理**：python-docx、docxtpl、pypdf（模板大纲提取）
 - **数据库**：Redis（短期记忆 / 缓存）、PostgreSQL / SQLite（业务数据）
 - **向量数据库**：ChromaDB（长期记忆）
 - **文献检索**：OpenAlex API、Semantic Scholar API
@@ -36,7 +36,8 @@
     ├── tools/                # 外部工具
     │   ├── literature.py     # OpenAlex / Semantic Scholar 文献检索
     │   ├── image_generation.py  # 通义万相图片生成（预留）
-    │   └── document.py       # docx 解析与生成
+    │   ├── document.py       # docx 解析与生成
+    │   └── outline.py        # docx / pdf 模板大纲提取与默认大纲
     ├── memory/               # 记忆管理
     │   ├── short_term.py     # Redis 短期记忆（自动降级为内存）
     │   └── long_term.py      # ChromaDB 长期记忆
@@ -75,6 +76,8 @@ API 文档：启动后访问 http://127.0.0.1:8000/docs
 
 - `GET  /api/v1/health`：健康检查
 - `POST /api/v1/papers/generate`：触发论文生成，请求体 `{"topic": "...", "max_revisions": 2}`
+- `POST /api/v1/papers/generate-with-template`：带模板生成，multipart 表单字段 `topic`、`max_revisions`、`file`（docx/pdf，可选；模板大纲优先于默认大纲）
+- `POST /api/v1/templates/extract-outline`：上传模板提取大纲，multipart 表单字段 `file`
 
 ## 环境变量
 
@@ -125,6 +128,9 @@ DEFAULT_MODEL=gpt-4o
 ## 设计说明
 
 - **状态**：`app/graph/state.py` 中的 `PaperState` 为 TypedDict，保持可序列化；Agent 与工具实例通过闭包注入状态图，不放入共享状态。
+- **大纲来源**：上传 docx / pdf 模板时，从标题样式 / PDF 书签（或文本启发式）提取大纲；未上传或提取为空时回退默认大纲（引言、相关工作、方法、实验与结果、结论）。
+- **日志**：流水线每个节点输出 `STEP n/total（百分比）| 步骤名` 日志（如文献检索、大纲生成、论文撰写、评审修订、配图生成），在 uvicorn / Streamlit 启动的控制台可见。
+- **进度**：`PaperAssistantAgent.generate()` 支持 `progress_callback(percent, step_name)` 进度回调；Streamlit 前端以进度条实时展示百分比与当前步骤。
 - **记忆**：`ShortTermMemory` 在 Redis 不可用时自动降级为进程内内存，便于本地开发；`LongTermMemory` 使用 ChromaDB 持久化向量。
 - **扩展点**：`WanxImageTool` 与 OSS 上传为预留接口，配置 `ALIYUN_DASHSCOPE_API_KEY` 后接入 DashScope 异步任务接口即可启用。
 - **入口引导**：`app/ui/streamlit_app.py` 启动时向上定位项目根目录并插入 `sys.path` 首位，保证 `app` 包在任何启动目录下都能被正确导入。
