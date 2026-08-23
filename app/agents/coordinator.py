@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 
 from app.agents.image_gen import ImageAgent
+from app.agents.outline import OutlineAgent
 from app.agents.research import ResearchAgent, ReviewerAgent, WriterAgent
 from app.config import setup_logging
 from app.graph.builder import build_graph
@@ -24,9 +25,11 @@ class PaperAssistantAgent:
         self.writer = WriterAgent()
         self.reviewer = ReviewerAgent()
         self.illustrator = ImageAgent()
+        self.outliner = OutlineAgent()
         self.literature = LiteratureSearchTool()
         self.graph = build_graph(
             researcher=self.researcher,
+            outline_agent=self.outliner,
             writer=self.writer,
             reviewer=self.reviewer,
             literature_tool=self.literature,

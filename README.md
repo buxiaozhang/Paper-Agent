@@ -128,7 +128,7 @@ DEFAULT_MODEL=gpt-4o
 ## 设计说明
 
 - **状态**：`app/graph/state.py` 中的 `PaperState` 为 TypedDict，保持可序列化；Agent 与工具实例通过闭包注入状态图，不放入共享状态。
-- **大纲来源**：上传 docx / pdf 模板时，从标题样式 / PDF 书签（或文本启发式）提取大纲；未上传或提取为空时回退默认大纲（引言、相关工作、方法、实验与结果、结论）。
+- **大纲来源**：上传 docx / pdf 模板时，从标题样式 / PDF 书签（或文本启发式）提取大纲作为参考；未上传或提取为空时以默认大纲（引言、相关工作、方法、实验与结果、结论）为参考。随后 `OutlineAgent` 结合论文主题、参考大纲与已检索文献，通过 LLM 优化生成专属章节大纲；LLM 输出无法解析时回退参考大纲。
 - **日志**：流水线每个节点输出 `STEP n/total（百分比）| 步骤名` 日志（如文献检索、大纲生成、论文撰写、评审修订、配图生成），在 uvicorn / Streamlit 启动的控制台可见。
 - **进度**：`PaperAssistantAgent.generate()` 支持 `progress_callback(percent, step_name)` 进度回调；Streamlit 前端以进度条实时展示百分比与当前步骤。
 - **记忆**：`ShortTermMemory` 在 Redis 不可用时自动降级为进程内内存，便于本地开发；`LongTermMemory` 使用 ChromaDB 持久化向量。
