@@ -36,7 +36,8 @@ class OutlineAgent(BaseAgent):
             if titles:
                 ref_text = "\n".join(f"- {t}" for t in titles)
         prompt = (
-            "你是学术论文写作专家。请根据论文主题和参考大纲，生成一份专属于该论文的章节大纲。\n"
+            # 学术论文写作专家
+            "你是一名大四软件工程学生。请根据论文主题和参考大纲，生成一份专属于该论文的章节大纲。\n"
             f"论文主题：{topic}\n"
             f"参考大纲（可能来自论文模板或默认结构）：\n{base_text}\n"
         )
@@ -57,7 +58,6 @@ class OutlineAgent(BaseAgent):
         sections = parse_sections(response)
         if sections:
             logger.info("大纲优化完成：生成 %d 个章节", len(sections))
-            logger.info("生成的专属大纲：%s", sections)
             return sections
         logger.warning(
             "大纲优化失败或输出无法解析，回退参考大纲（%d 个章节）",

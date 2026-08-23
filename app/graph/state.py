@@ -11,9 +11,12 @@ class PaperState(TypedDict, total=False):
     """
 
     topic: str                  # 论文主题
+    user_id: str                # 用户 ID（Redis 键与历史记录归属）
+    paper_id: int               # 数据库中的论文记录 ID
     title: str                  # 论文标题
     sections: list[str]         # 章节大纲
     template_outline: list[str] | None  # 从上传模板提取的大纲（优先于默认大纲）
+    section_summaries: dict[str, str]   # 各章节关键信息摘要（短期记忆上下文）
     draft: str                  # 当前草稿全文
     references: list[dict]      # 检索到的文献列表
     images: list[dict]          # 生成 / 预留的配图信息

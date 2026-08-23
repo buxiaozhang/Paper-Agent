@@ -34,14 +34,29 @@ class WriterAgent(BaseAgent):
     name = "writer"
     description = "论文正文撰写 Agent"
 
-    def run(self, topic: str, section: str, feedback: str | None = None) -> str:
-        """生成单个章节的正文。"""
+    def run(
+        self,
+        topic: str,
+        section: str,
+        feedback: str | None = None,
+        section_summaries: dict[str, str] | None = None,
+    ) -> str:
+        """生成单个章节的正文。
+
+        Args:
+            section_summaries: 此前各章节的关键信息摘要，用于保持连贯、
+                避免重复（防止直接拼接全文导致上下文爆炸）。
+        """
+        # 学术写作助手
         prompt = (
-            f"你是学术写作助手，请为论文「{topic}」撰写章节「{section}」的正文，"
+            f"你是一名即将毕业的大四软件工程的优秀学生，请为论文「{topic}」撰写章节「{section}」的正文，"
             "要求学术规范、语言严谨。"
         )
         if feedback:
             prompt += f"\n评审意见：{feedback}\n请据此修订。"
+        if section_summaries:
+            context = "\n".join(f"- {t}: {s}" for t, s in section_summaries.items())
+            prompt += f"\n此前各章节关键信息（保持连贯、避免重复）：\n{context}"
         response = self.llm.invoke(prompt)
         return str(response.content)
 
@@ -52,12 +67,31 @@ class ReviewerAgent(BaseAgent):
     name = "reviewer"
     description = "论文评审与质量检查 Agent"
 
-    def run(self, topic: str, draft: str) -> tuple[bool, str]:
-        """评审草稿，返回 (是否通过, 修改意见)。"""
-        prompt = (
-            f"你是严格的学术审稿人，请评审论文「{topic}」的草稿：\n{draft[:6000]}\n\n"
-            "若质量达标请仅回复 PASS，否则回复 REVISE 并列出具体修改意见。"
-        )
+    def run(
+        self,
+        topic: str,
+        draft: str,
+        section_summaries: dict[str, str] | None = None,
+    ) -> tuple[bool, str]:
+        """评审草稿，返回 (是否通过, 修改意见)。
+
+        Args:
+            section_summaries: 各章节关键信息摘要；提供时以摘要为主、
+                草稿片段为辅，避免全文进入上下文。
+        """
+        if section_summaries:
+            summary_text = "\n".join(f"- {t}: {s}" for t, s in section_summaries.items())
+            prompt = (
+                f"你是严格的学术审稿人，请评审论文「{topic}」。\n"
+                f"各章节关键信息摘要：\n{summary_text}\n\n"
+                f"草稿片段（供抽查）：\n{draft[:3000]}\n\n"
+                "若质量达标请仅回复 PASS，否则回复 REVISE 并列出具体修改意见。"
+            )
+        else:
+            prompt = (
+                f"你是严格的学术审稿人，请评审论文「{topic}」的草稿：\n{draft[:6000]}\n\n"
+                "若质量达标请仅回复 PASS，否则回复 REVISE 并列出具体修改意见。"
+            )
         response = str(self.llm.invoke(prompt).content)
         if response.strip().upper().startswith("PASS"):
             return True, ""

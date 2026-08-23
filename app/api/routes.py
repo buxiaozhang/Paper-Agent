@@ -5,19 +5,23 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app import __version__
-from app.agents.coordinator import PaperAssistantAgent
+from app.agents.coordinator import PaperAssistantAgent, PaperBusyError
 from app.api.schemas import (
     HealthResponse,
+    HistoryItem,
     OutlineResponse,
+    PaperDetailResponse,
     PaperGenerateRequest,
     PaperGenerateResponse,
+    ProgressResponse,
 )
-from app.memory.short_term import ShortTermMemory
+from app.db.store import PaperStore
 from app.tools.outline import extract_outline
 
 router = APIRouter()
 assistant = PaperAssistantAgent()
-short_memory = ShortTermMemory()
+store = PaperStore()
+store.init_db()
 
 TEMPLATE_EXTENSIONS = {".docx", ".pdf"}
 
@@ -31,8 +35,14 @@ def health_check() -> HealthResponse:
 @router.post("/papers/generate", response_model=PaperGenerateResponse, tags=["paper"])
 def generate_paper(request: PaperGenerateRequest) -> PaperGenerateResponse:
     """触发多 Agent 论文生成流水线。"""
-    result = assistant.generate(request.topic, max_revisions=request.max_revisions)
-    short_memory.set(f"paper:{result['topic']}", result)
+    try:
+        result = assistant.generate(
+            request.topic,
+            max_revisions=request.max_revisions,
+            user_id=request.user_id,
+        )
+    except PaperBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return PaperGenerateResponse(**result)
 
 
@@ -60,17 +70,54 @@ async def extract_template_outline(
 async def generate_paper_with_template(
     topic: str = Form(..., min_length=1, max_length=500),
     max_revisions: int = Form(2, ge=1, le=5),
+    user_id: str = Form("default", min_length=1, max_length=128),
     file: UploadFile | None = File(None, description="docx / pdf 大纲模板，可选"),
 ) -> PaperGenerateResponse:
     """上传模板生成论文：模板大纲优先，未上传时使用默认大纲。"""
     template_outline = await _read_template_outline(file)
-    result = assistant.generate(
-        topic,
-        max_revisions=max_revisions,
-        template_outline=template_outline,
-    )
-    short_memory.set(f"paper:{result['topic']}", result)
+    try:
+        result = assistant.generate(
+            topic,
+            max_revisions=max_revisions,
+            template_outline=template_outline,
+            user_id=user_id,
+        )
+    except PaperBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return PaperGenerateResponse(**result)
+
+
+@router.get("/papers/active-progress", response_model=ProgressResponse, tags=["paper"])
+def get_active_progress(user_id: str = "default") -> ProgressResponse:
+    """返回该用户最近一次任务进度（用于页面刷新恢复）。"""
+    payload = assistant.short_memory.find_active_progress(user_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="该用户暂无生成任务")
+    return ProgressResponse(**payload)
+
+
+@router.get("/papers/progress", response_model=ProgressResponse, tags=["paper"])
+def get_paper_progress(user_id: str = "default", topic: str = "") -> ProgressResponse:
+    """按用户 + 主题读取生成进度。"""
+    payload = assistant.short_memory.get_progress(user_id, topic)
+    if not payload:
+        raise HTTPException(status_code=404, detail="未找到该任务的进度")
+    return ProgressResponse(**payload)
+
+
+@router.get("/papers/history", response_model=list[HistoryItem], tags=["paper"])
+def list_history(user_id: str = "default", limit: int = 50) -> list[HistoryItem]:
+    """历史生成记录：主题与时间（倒序）。"""
+    return [HistoryItem(**item) for item in store.list_records(user_id, limit=limit)]
+
+
+@router.get("/papers/{paper_id}", response_model=PaperDetailResponse, tags=["paper"])
+def get_paper_detail(paper_id: int) -> PaperDetailResponse:
+    """从数据库读取已生成论文的完整内容。"""
+    paper = store.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文记录不存在")
+    return PaperDetailResponse(**paper)
 
 
 async def _read_template_outline(file: UploadFile | None) -> list[str] | None:

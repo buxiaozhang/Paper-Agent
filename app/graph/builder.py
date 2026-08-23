@@ -9,7 +9,10 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agents.outline import OutlineAgent
 from app.agents.research import ResearchAgent, ReviewerAgent, WriterAgent
+from app.agents.summary import SummaryAgent
+from app.db.store import PaperStore
 from app.graph.state import PaperState
+from app.memory.short_term import ShortTermMemory, summary_key
 from app.tools.literature import LiteratureSearchTool
 from app.tools.outline import DEFAULT_SECTIONS, resolve_sections
 
@@ -21,7 +24,10 @@ def build_graph(
     outline_agent: OutlineAgent,
     writer: WriterAgent,
     reviewer: ReviewerAgent,
+    summarizer: SummaryAgent,
     literature_tool: LiteratureSearchTool,
+    short_memory: ShortTermMemory,
+    store: PaperStore,
 ):
     """构建并编译论文生成流水线。"""
 
@@ -45,9 +51,17 @@ def build_graph(
             len(base_sections),
         )
         sections = outline_agent.run(topic, base_sections, state.get("references"))
+        logger.info("生成的专属模板大纲%s",sections)
         logger.info("节点完成：大纲生成，共 %d 个章节", len(sections))
+        title = f"{topic}：一项基于大四水平的软件工程专业的论文"
+        paper_id = state.get("paper_id")
+        if paper_id:
+            # 大纲持久化到大纲表
+            store.save_outline(paper_id, sections)
+            store.update_record(paper_id, title=title, status="writing")
         return {
-            "title": f"{topic}：一项基于多智能体协作的研究",
+            # 一项基于多智能体协作的研究
+            "title": title,
             "sections": sections,
             "status": "outlining",
             "step": "大纲生成",
@@ -58,14 +72,34 @@ def build_graph(
         topic = state.get("topic", "")
         feedback = state.get("feedback")
         sections = state.get("sections", DEFAULT_SECTIONS)
+        previous_summaries = state.get("section_summaries") or {}
         revision = state.get("revision_count", 0) + 1
         logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
-        parts = []
+        parts, texts, summaries = [], [], {}
         for section in sections:
-            parts.append(f"## {section}\n{writer.run(topic, section, feedback)}")
+            # 将短期记忆传给大模型，只传关键信息摘要，避免上下文过长 / token 过多
+            text = writer.run(topic, section, feedback, previous_summaries)
+            texts.append(text)
+            parts.append(f"## {section}\n{text}")
+            # 将每一个大章节的内容只提取关键信息
+            summaries[section] = summarizer.run(section, text)
+        # 使用 Redis 存储：user_id + 论文主题
+        user_id = state.get("user_id", "default")
+        short_memory.set(summary_key(user_id, topic), summaries, ttl=86400)
+        paper_id = state.get("paper_id")
+        if paper_id:
+            # 生成后的内容持久化到内容表
+            store.save_sections(
+                paper_id,
+                [
+                    {"title": s, "content": t, "summary": summaries[s]}
+                    for s, t in zip(sections, texts)
+                ],
+            )
         logger.info("节点完成：论文撰写（第 %d 轮）", revision)
         return {
             "draft": "\n\n".join(parts),
+            "section_summaries": summaries,
             "revision_count": revision,
             "status": "reviewing",
             "step": "论文撰写",
@@ -74,7 +108,11 @@ def build_graph(
     def review_node(state: PaperState) -> dict:
         """评审节点：质量检查，决定通过或退回修订。"""
         logger.info("节点开始：评审修订")
-        passed, feedback = reviewer.run(state.get("topic", ""), state.get("draft", ""))
+        passed, feedback = reviewer.run(
+            state.get("topic", ""),
+            state.get("draft", ""),
+            state.get("section_summaries"),
+        )
         if passed:
             logger.info("节点完成：评审通过")
             return {"feedback": "", "status": "done", "step": "评审修订"}
@@ -87,7 +125,7 @@ def build_graph(
 
         logger.info("节点开始：配图生成")
         # images = ImageAgent().run(state.get("topic", ""))
-        images="暂时搁置生图agent"
+        images = [{"status": "placeholder", "note": "暂时搁置生图agent"}]
         logger.info("节点完成：配图生成，返回 %d 条结果", len(images))
         return {"images": images, "step": "配图生成"}
 

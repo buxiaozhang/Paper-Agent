@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     # ---------- 数据存储 ----------
     redis_url: str = "redis://localhost:6379/0"
     # 开发环境默认 SQLite；生产环境可改为 postgresql+asyncpg://...
-    database_url: str = "sqlite+aiosqlite:///./paper_agent.db"
+    # MySQL 示例：mysql+pymysql://user:password@localhost:3306/paper_agent
+    database_url: str = "sqlite:///./paper_agent.db"
 
     # ---------- 向量数据库 ----------
     chroma_dir: str = "./data/chroma"

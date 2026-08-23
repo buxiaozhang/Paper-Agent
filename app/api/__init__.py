@@ -2,6 +2,22 @@
 
 from app.api.main import app
 from app.api.routes import router
-from app.api.schemas import OutlineResponse, PaperGenerateRequest, PaperGenerateResponse
+from app.api.schemas import (
+    HistoryItem,
+    OutlineResponse,
+    PaperDetailResponse,
+    PaperGenerateRequest,
+    PaperGenerateResponse,
+    ProgressResponse,
+)
 
-__all__ = ["app", "router", "PaperGenerateRequest", "PaperGenerateResponse", "OutlineResponse"]
+__all__ = [
+    "app",
+    "router",
+    "PaperGenerateRequest",
+    "PaperGenerateResponse",
+    "OutlineResponse",
+    "ProgressResponse",
+    "HistoryItem",
+    "PaperDetailResponse",
+]
