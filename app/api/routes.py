@@ -16,7 +16,7 @@ from app.api.schemas import (
     ProgressResponse,
 )
 from app.db.store import PaperStore
-from app.tools.outline import extract_outline
+from app.tools.outline import extract_outline, extract_outline_structure
 
 router = APIRouter()
 assistant = PaperAssistantAgent()
@@ -55,11 +55,17 @@ async def extract_template_outline(
     file: UploadFile = File(..., description="docx / pdf 大纲模板"),
 ) -> OutlineResponse:
     """上传 docx / pdf 模板并提取章节大纲。"""
-    sections = await _read_template_outline(file)
+    filename, content = await _read_template_content(file)
+    sections, structure = _parse_template(filename, content)
     if not sections:
         raise HTTPException(status_code=400, detail="未能从模板中提取到大纲")
-    suffix = Path(file.filename or "").suffix.lower().lstrip(".")
-    return OutlineResponse(filename=file.filename or "", source=suffix, sections=sections)
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    return OutlineResponse(
+        filename=filename,
+        source=suffix,
+        sections=sections,
+        structure=structure or [],
+    )
 
 
 @router.post(
@@ -74,12 +80,17 @@ async def generate_paper_with_template(
     file: UploadFile | None = File(None, description="docx / pdf 大纲模板，可选"),
 ) -> PaperGenerateResponse:
     """上传模板生成论文：模板大纲优先，未上传时使用默认大纲。"""
-    template_outline = await _read_template_outline(file)
+    template_outline: list[str] | None = None
+    template_hierarchy: list[dict] | None = None
+    if file is not None:
+        filename, content = await _read_template_content(file)
+        template_outline, template_hierarchy = _parse_template(filename, content)
     try:
         result = assistant.generate(
             topic,
             max_revisions=max_revisions,
             template_outline=template_outline,
+            template_hierarchy=template_hierarchy,
             user_id=user_id,
         )
     except PaperBusyError as exc:
@@ -120,17 +131,22 @@ def get_paper_detail(paper_id: int) -> PaperDetailResponse:
     return PaperDetailResponse(**paper)
 
 
-async def _read_template_outline(file: UploadFile | None) -> list[str] | None:
-    """读取上传文件并提取大纲；无文件返回 None，格式不支持或解析失败抛 400。"""
-    if file is None:
-        return None
+async def _read_template_content(file: UploadFile) -> tuple[str, bytes]:
+    """校验并一次性读取上传模板，返回 (文件名, 文件内容)。"""
     filename = file.filename or ""
     if Path(filename).suffix.lower() not in TEMPLATE_EXTENSIONS:
         raise HTTPException(status_code=400, detail="仅支持 .docx 或 .pdf 格式的模板文件")
     try:
-        content = await file.read()
-        return extract_outline(filename, content)
-    except HTTPException:
-        raise
+        return filename, await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"模板读取失败：{exc}") from exc
+
+
+def _parse_template(filename: str, content: bytes) -> tuple[list[str], list[dict]]:
+    """解析模板：返回（一级大纲, 层级大纲）。"""
+    try:
+        outline = extract_outline(filename, content)
+        hierarchy = extract_outline_structure(filename, content)
+        return outline, hierarchy
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"模板解析失败：{exc}") from exc

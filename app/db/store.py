@@ -29,6 +29,24 @@ class PaperStore:
     def init_db(self) -> None:
         """创建数据表（幂等）。"""
         Base.metadata.create_all(self.engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """轻量迁移：为旧库的 outlines 表补充 subsections 列。"""
+        try:
+            with self.engine.begin() as conn:
+                if self.engine.dialect.name == "sqlite":
+                    columns = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(outlines)")]
+                    if columns and "subsections" not in columns:
+                        conn.exec_driver_sql("ALTER TABLE outlines ADD COLUMN subsections JSON")
+                elif self.engine.dialect.name == "mysql":
+                    exists = conn.exec_driver_sql(
+                        "SHOW COLUMNS FROM outlines LIKE 'subsections'"
+                    ).fetchall()
+                    if not exists:
+                        conn.exec_driver_sql("ALTER TABLE outlines ADD COLUMN subsections JSON NULL")
+        except Exception as exc:  # 迁移失败不影响启动
+            logger.warning("数据库迁移检查失败：%s", exc)
 
     # ---------- 历史记录 ----------
     def create_record(self, user_id: str, topic: str, title: str = "") -> int:
@@ -97,7 +115,10 @@ class PaperStore:
                 "status": record.status,
                 "created_at": _iso(record.created_at),
                 "updated_at": _iso(record.updated_at),
-                "outline": [o.title for o in outlines],
+                "outline": [
+                    {"title": o.title, "subsections": list(o.subsections or [])}
+                    for o in outlines
+                ],
                 "sections": [
                     {
                         "section_order": s.section_order,
@@ -110,12 +131,19 @@ class PaperStore:
             }
 
     # ---------- 大纲 ----------
-    def save_outline(self, paper_id: int, sections: list[str]) -> None:
-        """覆盖写入大纲表。"""
+    def save_outline(self, paper_id: int, structure: list[dict]) -> None:
+        """覆盖写入大纲表。structure: [{"title": 一级标题, "subsections": [二级...]}]"""
         with Session(self.engine) as session:
             session.execute(delete(PaperOutline).where(PaperOutline.paper_id == paper_id))
-            for index, title in enumerate(sections):
-                session.add(PaperOutline(paper_id=paper_id, section_order=index, title=title))
+            for index, item in enumerate(structure):
+                session.add(
+                    PaperOutline(
+                        paper_id=paper_id,
+                        section_order=index,
+                        title=item.get("title", ""),
+                        subsections=list(item.get("subsections", [])),
+                    )
+                )
             session.commit()
 
     # ---------- 章节内容 ----------

@@ -8,7 +8,10 @@ from app.tools.outline import (
     extract_outline,
     extract_outline_from_docx,
     extract_outline_from_pdf,
+    extract_outline_structure,
+    hierarchy_to_text,
     resolve_sections,
+    split_structure,
 )
 
 __all__ = [
@@ -19,7 +22,10 @@ __all__ = [
     "extract_outline",
     "extract_outline_from_docx",
     "extract_outline_from_pdf",
+    "extract_outline_structure",
+    "hierarchy_to_text",
     "resolve_sections",
+    "split_structure",
     "extract_text_from_docx",
     "render_docx_template",
     "build_paper_docx",

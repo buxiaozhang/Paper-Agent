@@ -37,6 +37,7 @@ class OutlineResponse(BaseModel):
     filename: str
     source: str            # 模板文件类型：docx / pdf
     sections: list[str]
+    structure: list[dict]  # 层级大纲：[{"level": 1|2, "title": ...}]
 
 
 class ProgressResponse(BaseModel):
@@ -71,6 +72,13 @@ class SectionItem(BaseModel):
     summary: str
 
 
+class OutlineItem(BaseModel):
+    """大纲表条目：一级标题及其二级标题。"""
+
+    title: str
+    subsections: list[str]
+
+
 class PaperDetailResponse(BaseModel):
     """论文详情：记录 + 大纲 + 章节内容。"""
 
@@ -81,5 +89,5 @@ class PaperDetailResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
-    outline: list[str]
+    outline: list[OutlineItem]
     sections: list[SectionItem]

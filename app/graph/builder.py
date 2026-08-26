@@ -14,7 +14,7 @@ from app.db.store import PaperStore
 from app.graph.state import PaperState
 from app.memory.short_term import ShortTermMemory, summary_key
 from app.tools.literature import LiteratureSearchTool
-from app.tools.outline import DEFAULT_SECTIONS, resolve_sections
+from app.tools.outline import DEFAULT_SECTIONS, resolve_sections, split_structure
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,9 @@ def build_graph(
         """研究节点：检索文献并生成研究背景。"""
         topic = state.get("topic", "")
         logger.info("节点开始：文献检索（主题：%s）", topic)
-        references = literature_tool.search(topic, limit=5)
+        references = literature_tool.search(topic, limit=10)
         logger.info("节点完成：文献检索，命中 %d 篇文献", len(references))
+        logger.info("文献内容：%s",references)
         researcher.run(topic, references)  # 生成背景综述（暂存于后续草稿流程）
         return {"references": references, "status": "researching", "step": "文献检索"}
 
@@ -50,19 +51,27 @@ def build_graph(
             "有" if template_outline else "无，使用默认",
             len(base_sections),
         )
-        sections = outline_agent.run(topic, base_sections, state.get("references"))
-        logger.info("生成的专属模板大纲%s",sections)
+        structure = outline_agent.run(
+            topic,
+            base_sections,
+            state.get("references"),
+            state.get("template_hierarchy"),
+        )
+        sections, subsections_map = split_structure(structure)
+        logger.info("生成的专属模板大纲%s", sections)
+        logger.info("二级标题映射%s", subsections_map)
         logger.info("节点完成：大纲生成，共 %d 个章节", len(sections))
         title = f"{topic}：一项基于大四水平的软件工程专业的论文"
         paper_id = state.get("paper_id")
         if paper_id:
             # 大纲持久化到大纲表
-            store.save_outline(paper_id, sections)
+            store.save_outline(paper_id, structure)
             store.update_record(paper_id, title=title, status="writing")
         return {
             # 一项基于多智能体协作的研究
             "title": title,
             "sections": sections,
+            "section_subsections": subsections_map,
             "status": "outlining",
             "step": "大纲生成",
         }
@@ -72,13 +81,23 @@ def build_graph(
         topic = state.get("topic", "")
         feedback = state.get("feedback")
         sections = state.get("sections", DEFAULT_SECTIONS)
+        references=state.get("references","未检索到相关文献")
         previous_summaries = state.get("section_summaries") or {}
+        subsections_map = state.get("section_subsections") or {}
         revision = state.get("revision_count", 0) + 1
         logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
         parts, texts, summaries = [], [], {}
         for section in sections:
             # 将短期记忆传给大模型，只传关键信息摘要，避免上下文过长 / token 过多
-            text = writer.run(topic, section, feedback, previous_summaries)
+            text = writer.run(
+                topic,
+                section,
+                feedback,
+                previous_summaries,
+                subsections_map.get(section),
+                references
+
+            )
             texts.append(text)
             parts.append(f"## {section}\n{text}")
             # 将每一个大章节的内容只提取关键信息
@@ -124,8 +143,8 @@ def build_graph(
         from app.agents.image_gen import ImageAgent
 
         logger.info("节点开始：配图生成")
-        # images = ImageAgent().run(state.get("topic", ""))
-        images = [{"status": "placeholder", "note": "暂时搁置生图agent"}]
+        images = ImageAgent().run(state.get("topic", ""))
+        # images = [{"status": "placeholder", "note": "暂时搁置生图agent"}]
         logger.info("节点完成：配图生成，返回 %d 条结果", len(images))
         return {"images": images, "step": "配图生成"}
 
@@ -133,7 +152,7 @@ def build_graph(
         """条件边：评审通过或达到修订上限则进入配图，否则回到撰写节点。"""
         if state.get("status") == "done":
             return "image"
-        if state.get("revision_count", 0) >= state.get("max_revisions", 2):
+        if state.get("revision_count", 0) >= state.get("max_revisions", 1):
             return "image"
         return "writer"
 

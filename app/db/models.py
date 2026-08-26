@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,7 +27,7 @@ class PaperRecord(Base):
 
 
 class PaperOutline(Base):
-    """大纲表：论文的章节大纲。"""
+    """大纲表：论文的章节大纲（含二级标题）。"""
 
     __tablename__ = "outlines"
 
@@ -35,6 +35,7 @@ class PaperOutline(Base):
     paper_id: Mapped[int] = mapped_column(Integer, index=True)
     section_order: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(500))
+    subsections: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class PaperSection(Base):

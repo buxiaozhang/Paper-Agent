@@ -40,16 +40,20 @@ class WriterAgent(BaseAgent):
         section: str,
         feedback: str | None = None,
         section_summaries: dict[str, str] | None = None,
+        subsections: list[str] | None = None,
+        references: list[str] | None = None,
     ) -> str:
         """生成单个章节的正文。
 
         Args:
             section_summaries: 此前各章节的关键信息摘要，用于保持连贯、
                 避免重复（防止直接拼接全文导致上下文爆炸）。
+            subsections: 本节参考二级标题（写作提示，内容应覆盖这些要点）。
         """
         # 学术写作助手
         prompt = (
             f"你是一名即将毕业的大四软件工程的优秀学生，请为论文「{topic}」撰写章节「{section}」的正文，"
+            f"如果本章节是文献的话，请将{references}中的文献输入，而不是自己构建文献"
             "要求学术规范、语言严谨。"
         )
         if feedback:
@@ -57,6 +61,9 @@ class WriterAgent(BaseAgent):
         if section_summaries:
             context = "\n".join(f"- {t}: {s}" for t, s in section_summaries.items())
             prompt += f"\n此前各章节关键信息（保持连贯、避免重复）：\n{context}"
+        if subsections:
+            subs_text = "\n".join(f"- {s}" for s in subsections)
+            prompt += f"\n本节参考二级标题（内容应覆盖这些要点）：\n{subs_text}"
         response = self.llm.invoke(prompt)
         return str(response.content)
 

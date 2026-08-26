@@ -45,7 +45,7 @@ from app.agents.coordinator import PaperAssistantAgent, PaperBusyError
 from app.db.store import PaperStore
 from app.memory.short_term import ShortTermMemory, lock_key, progress_key
 from app.tools.document import build_paper_docx
-from app.tools.outline import extract_outline
+from app.tools.outline import extract_outline, extract_outline_structure
 
 # UI、生成线程与数据库共用同一批实例，保证无 Redis 时进程内数据仍互通
 memory = ShortTermMemory()
@@ -84,9 +84,13 @@ def _render_paper(paper: dict) -> None:
         f"状态：{paper.get('status')} ｜ 生成时间：{_fmt_time(paper.get('created_at'))}"
     )
     if paper.get("outline"):
-        st.markdown("**大纲**：" + "、".join(paper["outline"]))
+        st.markdown("**大纲**：")
+        for item in paper["outline"]:
+            st.markdown(f"- {item.get('title', '')}")
+            for sub in item.get("subsections", []):
+                st.markdown(f"    - {sub}")
     for section in paper.get("sections", []):
-        with st.expander(f"{section['title']}（摘要：{section['summary'][:80]}）"):
+        with st.expander(f"{section['title']}（摘要：{(section.get('summary') or '')[:80]}）"):
             st.markdown(section["content"])
 
 
@@ -116,6 +120,9 @@ def _wait_for_progress(user_id: str, topic: str) -> dict | None:
 
 def _load_and_render(paper_id: int) -> None:
     """从数据库读取并渲染已生成论文。"""
+    if not paper_id:
+        st.warning("未在数据库中找到该论文记录")
+        return
     paper = store.get_paper(paper_id)
     if paper:
         _render_paper(paper)
@@ -123,8 +130,23 @@ def _load_and_render(paper_id: int) -> None:
         st.warning("未在数据库中找到该论文记录")
 
 
+def _start_new_generation() -> None:
+    """清空上一次展示的内容，回到新生成页面。"""
+    st.session_state["view"] = "generate"
+    st.session_state["view_paper_id"] = None
+    st.session_state["result_paper_id"] = None
+
+
 st.set_page_config(page_title="agent-paper-assistant", page_icon="📄", layout="wide")
 st.title("📄 学术论文辅助生成系统（多 Agent 协作）")
+
+# ---------- 视图状态：默认（首次打开）为新生成页面 ----------
+if "view" not in st.session_state:
+    st.session_state["view"] = "generate"
+if "view_paper_id" not in st.session_state:
+    st.session_state["view_paper_id"] = None
+if "result_paper_id" not in st.session_state:
+    st.session_state["result_paper_id"] = None
 
 # ---------- 侧栏：历史生成记录（主题与时间） ----------
 with st.sidebar:
@@ -136,117 +158,133 @@ with st.sidebar:
     for record in records:
         label = f"{_fmt_time(record['created_at'])} ｜ {record['topic'][:24]}"
         if st.button(label, key=f"history_{record['id']}", use_container_width=True):
+            st.session_state["view"] = "paper"
             st.session_state["view_paper_id"] = record["id"]
+            st.session_state["result_paper_id"] = None
 
-# ---------- 主区域输入 ----------
-user_id = st.text_input("用户 ID", value="default_user", help="同一用户同时只能生成一篇论文")
-topic = st.text_input("论文主题 / 研究问题", placeholder="例如：基于多智能体协作的文献综述自动生成方法")
-max_revisions = st.slider("评审-修订最大轮数", min_value=1, max_value=5, value=2)
+# ---------- 论文详情视图（历史 / 上次结果） ----------
+if st.session_state["view"] == "paper":
+    if st.button("开始新生成", type="primary"):
+        _start_new_generation()
+        st.rerun()
+    st.markdown("### 历史论文详情")
+    _load_and_render(st.session_state["view_paper_id"])
+else:
+    # ============ 新生成页面 ============
+    user_id = st.text_input("用户 ID", value="default_user", help="同一用户同时只能生成一篇论文")
+    topic = st.text_input("论文主题 / 研究问题", placeholder="例如：基于多智能体协作的文献综述自动生成方法")
+    max_revisions = st.slider("评审-修订最大轮数", min_value=1, max_value=5, value=2)
 
-uploaded_template = st.file_uploader(
-    "上传大纲模板（.docx / .pdf，可选；未上传时使用默认大纲）",
-    type=["docx", "pdf"],
-)
+    uploaded_template = st.file_uploader(
+        "上传大纲模板（.docx / .pdf，可选；未上传时使用默认大纲）",
+        type=["docx", "pdf"],
+    )
 
-template_outline: list[str] | None = None
-if uploaded_template is not None:
-    try:
-        template_outline = extract_outline(uploaded_template.name, uploaded_template.getvalue())
-        st.success(f"已从模板提取 {len(template_outline)} 个章节：")
-        st.caption("、".join(template_outline))
-    except Exception:
-        template_outline = None
-        st.error("模板解析失败，本次生成将使用默认大纲")
+    template_outline: list[str] | None = None
+    template_hierarchy: list[dict] | None = None
+    if uploaded_template is not None:
+        try:
+            content = uploaded_template.getvalue()
+            template_outline = extract_outline(uploaded_template.name, content)
+            template_hierarchy = extract_outline_structure(uploaded_template.name, content)
+            st.success(f"已从模板提取 {len(template_outline)} 个一级章节：")
+            preview = []
+            for item in template_hierarchy:
+                prefix = "    - " if item.get("level", 1) == 2 else "- "
+                preview.append(f"{prefix}{item.get('title', '')}")
+            st.caption("\n".join(preview))
+        except Exception:
+            template_outline = None
+            template_hierarchy = None
+            st.error("模板解析失败，本次生成将使用默认大纲")
 
-# ---------- 刷新恢复：页面重载时读取 Redis 中的进行中 / 已完成任务 ----------
-active = memory.find_active_progress(user_id)
-if active and not _is_stale(active):
-    if active.get("status") == "running":
+    # ---------- 刷新恢复：仅跟踪进行中的任务；历史完成内容不自动展示 ----------
+    active = memory.find_active_progress(user_id)
+    if active and not _is_stale(active) and active.get("status") == "running":
         st.info(f"检测到进行中的任务「{active.get('topic')}」，正在恢复进度…")
         final = _wait_for_progress(user_id, active["topic"])
         if final and final.get("status") == "done" and final.get("paper_id"):
-            st.success("任务已完成，从数据库加载生成结果：")
-            _load_and_render(final["paper_id"])
+            st.session_state["result_paper_id"] = final["paper_id"]
         elif final and final.get("status") == "error":
             st.error(f"上次任务生成失败：{final.get('step')}")
-    elif active.get("status") == "done" and active.get("paper_id"):
-        st.success(f"上次任务「{active.get('topic')}」已完成，从数据库加载结果：")
-        _load_and_render(active["paper_id"])
-    elif active.get("status") == "error":
-        st.error(f"上次任务「{active.get('topic')}」生成失败")
-elif active and _is_stale(active):
-    memory.delete(progress_key(user_id, active.get("topic", "")))
-    memory.release_lock(lock_key(user_id))
+    elif active and _is_stale(active):
+        memory.delete(progress_key(user_id, active.get("topic", "")))
+        memory.release_lock(lock_key(user_id))
 
-# ---------- 生成 ----------
-if st.button("开始生成", type="primary", disabled=not topic):
-    thread_error: dict = {"error": None}
-    thread_done: dict = {"done": False}
+    # ---------- 生成 ----------
+    if st.button("开始生成", type="primary", disabled=not topic):
+        st.session_state["result_paper_id"] = None  # 开始新任务时不再展示上一次内容
+        thread_error: dict = {"error": None}
+        thread_done: dict = {"done": False}
 
-    def _run() -> None:
-        """后台线程：执行流水线；进度由协调器写入 Redis，主线程轮询读取。"""
+        def _run() -> None:
+            """后台线程：执行流水线；进度由协调器写入 Redis，主线程轮询读取。"""
+            try:
+                assistant = PaperAssistantAgent(short_memory=memory, store=store)
+                assistant.generate(
+                    topic=topic,
+                    max_revisions=max_revisions,
+                    template_outline=template_outline,
+                    template_hierarchy=template_hierarchy,
+                    user_id=user_id,
+                )
+            except Exception as exc:
+                thread_error["error"] = exc
+            finally:
+                thread_done["done"] = True
+
+        threading.Thread(target=_run, daemon=True).start()
+
+        progress_bar = st.progress(0, text="准备开始…")
+        last_percent = -1
+        final = None
+        while True:
+            payload = memory.get_progress(user_id, topic)
+            if payload and not _is_stale(payload):
+                percent = int(payload.get("percent", 0))
+                step = payload.get("step", "")
+                if percent != last_percent:
+                    progress_bar.progress(percent / 100, text=f"{step}（{percent}%）")
+                    last_percent = percent
+                if payload.get("status") in ("done", "error"):
+                    final = payload
+                    break
+            elif thread_done["done"]:
+                break  # 线程已结束但未写入进度（如并发冲突被拒绝）
+            time.sleep(0.5)
+
+        if isinstance(thread_error["error"], PaperBusyError):
+            st.warning(str(thread_error["error"]))
+            # 已有任务进行中：改为跟随现有任务进度
+            running = memory.find_active_progress(user_id)
+            if running and running.get("status") == "running" and not _is_stale(running):
+                final = _wait_for_progress(user_id, running["topic"])
+        elif thread_error["error"] is not None:
+            st.error(f"生成失败：{thread_error['error']}")
+
+        if final and final.get("status") == "done" and final.get("paper_id"):
+            st.session_state["result_paper_id"] = final["paper_id"]
+        elif final and final.get("status") == "error":
+            st.error(f"生成失败：{final.get('step')}")
+
+    # ---------- 当前会话生成结果展示（可一键返回新生成页面） ----------
+    if st.session_state.get("result_paper_id"):
+        st.divider()
+        col_new, col_tip = st.columns([1, 4])
+        if col_new.button("开始新生成", type="primary"):
+            _start_new_generation()
+            st.rerun()
+        with col_tip:
+            st.success("生成完成，已持久化到数据库")
+        _load_and_render(st.session_state["result_paper_id"])
+
+        # 导出 .docx（基于数据库中最新章节）
         try:
-            assistant = PaperAssistantAgent(short_memory=memory, store=store)
-            assistant.generate(
-                topic=topic,
-                max_revisions=max_revisions,
-                template_outline=template_outline,
-                user_id=user_id,
-            )
-        except Exception as exc:
-            thread_error["error"] = exc
-        finally:
-            thread_done["done"] = True
-
-    threading.Thread(target=_run, daemon=True).start()
-
-    progress_bar = st.progress(0, text="准备开始…")
-    last_percent = -1
-    final = None
-    while True:
-        payload = memory.get_progress(user_id, topic)
-        if payload and not _is_stale(payload):
-            percent = int(payload.get("percent", 0))
-            step = payload.get("step", "")
-            if percent != last_percent:
-                progress_bar.progress(percent / 100, text=f"{step}（{percent}%）")
-                last_percent = percent
-            if payload.get("status") in ("done", "error"):
-                final = payload
-                break
-        elif thread_done["done"]:
-            break  # 线程已结束但未写入进度（如并发冲突被拒绝）
-        time.sleep(0.5)
-
-    if isinstance(thread_error["error"], PaperBusyError):
-        st.warning(str(thread_error["error"]))
-        # 已有任务进行中：改为跟随现有任务进度
-        running = memory.find_active_progress(user_id)
-        if running and running.get("status") == "running" and not _is_stale(running):
-            final = _wait_for_progress(user_id, running["topic"])
-    elif thread_error["error"] is not None:
-        st.error(f"生成失败：{thread_error['error']}")
-
-    if final and final.get("status") == "done" and final.get("paper_id"):
-        st.success("生成完成，已持久化到数据库")
-        _load_and_render(final["paper_id"])
-    elif final and final.get("status") == "error":
-        st.error(f"生成失败：{final.get('step')}")
-
-    # 导出 .docx（基于数据库中最新章节）
-    try:
-        if final and final.get("paper_id"):
-            paper = store.get_paper(final["paper_id"])
+            paper = store.get_paper(st.session_state["result_paper_id"])
             if paper and paper.get("sections"):
                 sections = {s["title"]: s["content"] for s in paper["sections"]}
                 build_paper_docx(paper.get("title") or topic, sections, "paper_draft.docx")
                 with open("paper_draft.docx", "rb") as f:
                     st.download_button("下载 Word 草稿", f, file_name="paper.docx")
-    except OSError:
-        st.warning("Word 导出暂不可用")
-
-# ---------- 查看历史记录详情 ----------
-if st.session_state.get("view_paper_id"):
-    st.divider()
-    st.markdown("### 历史论文详情")
-    _load_and_render(st.session_state["view_paper_id"])
+        except OSError:
+            st.warning("Word 导出暂不可用")

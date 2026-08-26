@@ -60,6 +60,7 @@ class PaperAssistantAgent:
         topic: str,
         max_revisions: int = 2,
         template_outline: list[str] | None = None,
+        template_hierarchy: list[dict] | None = None,
         progress_callback: ProgressCallback | None = None,
         user_id: str = "default",
     ) -> dict:
@@ -69,6 +70,7 @@ class PaperAssistantAgent:
             topic: 论文主题。
             max_revisions: 评审-修订最大轮数。
             template_outline: 从上传模板提取的大纲；为 None 时使用默认大纲。
+            template_hierarchy: 模板层级（一级 + 二级标题），作为大纲 Agent 的参考。
             progress_callback: 进度回调，参数为 (百分比, 当前步骤名)。
             user_id: 用户 ID（用于锁、进度与历史记录）。
         """
@@ -123,6 +125,7 @@ class PaperAssistantAgent:
                 "max_revisions": max_revisions,
                 "draft": "",
                 "template_outline": template_outline,
+                "template_hierarchy": template_hierarchy,
             }
             for state in self.graph.stream(initial_state, stream_mode="values"):
                 step_name = state.get("step")
