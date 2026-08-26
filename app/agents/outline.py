@@ -37,6 +37,7 @@ class OutlineAgent(BaseAgent):
                 未提供时仅按主题与一级参考大纲生成。
         """
         base_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(base_sections))
+        logger.info("模板大纲：%s",base_text)
         template_text = hierarchy_to_text(template_hierarchy)
         ref_text = ""
         if references:
@@ -51,12 +52,12 @@ class OutlineAgent(BaseAgent):
         )
         if template_text:
             prompt += f"模板的完整层级结构（二级标题的重要参考）：\n{template_text}\n"
-        if ref_text:
-            prompt += f"已检索到的相关文献（可作参考）：\n{ref_text}\n"
+        # if ref_text:
+        #     prompt += f"已检索到的相关文献（可作参考）：\n{ref_text}\n"
         prompt += (
             "要求：\n"
             "1. 一级标题紧扣主题（可参考模板一级标题），删除与主题无关的章节；\n"
-            "2. 每个一级标题下给出 2-4 个二级标题，优先沿用模板对应的二级标题结构，"
+            "2. 每个一级标题下给出二级标题，优先沿用模板对应的二级标题结构，"
             "结合主题适当调整；\n"
             "3. 章节数量适中（一级标题建议 5-10 个）；\n"
             "4. 每行一个标题，用编号层级表示级别，例如：\n"
@@ -193,7 +194,7 @@ def _assemble(items: list[dict]) -> list[dict] | None:
         {"title": item["title"], "subsections": _dedupe(item["subsections"])[:_MAX_SUBSECTIONS]}
         for item in structure
     ][:_MAX_SECTIONS]
-    logger.info("真正使用的模板大钢：structure: %s", structure)
+    # logger.info("真正使用的模板大钢：structure: %s", structure)
     return structure if len(structure) >= _MIN_SECTIONS else None
 
 

@@ -80,9 +80,9 @@ API 文档：启动后访问 http://127.0.0.1:8000/docs
 主要接口：
 
 - `GET  /api/v1/health`：健康检查
-- `POST /api/v1/papers/generate`：触发论文生成，请求体 `{"topic": "...", "max_revisions": 2, "user_id": "..."}`；同一用户并发生成返回 409
+- `POST /api/v1/papers/generate`：触发论文生成，请求体 `{"topic": "...", "max_revisions": 2, "user_id": "...", "template_id": "..."}`（`template_id` 可选，来自模板提取接口）；同一用户并发生成返回 409
 - `POST /api/v1/papers/generate-with-template`：带模板生成，multipart 表单字段 `topic`、`max_revisions`、`user_id`、`file`（docx/pdf，可选；模板大纲优先于默认大纲）
-- `POST /api/v1/templates/extract-outline`：上传模板提取大纲，multipart 表单字段 `file`
+- `POST /api/v1/templates/extract-outline`：上传模板提取大纲并切片向量化，multipart 表单字段 `file`；响应包含 `sections`、`structure` 与 `template_id`
 - `GET  /api/v1/papers/active-progress?user_id=`：读取该用户最近一次任务进度（刷新恢复）
 - `GET  /api/v1/papers/progress?user_id=&topic=`：按用户 + 主题读取进度
 - `GET  /api/v1/papers/history?user_id=`：历史生成记录（主题与时间，倒序）
@@ -147,12 +147,14 @@ DEFAULT_MODEL=gpt-4o
 - **状态**：`app/graph/state.py` 中的 `PaperState` 为 TypedDict，保持可序列化；Agent 与工具实例通过闭包注入状态图，不放入共享状态。
 - **大纲来源（层级）**：上传 docx / pdf 模板时，标题样式（Heading / 标题 / TOC）与编号、常见章节关键词（如“相关技术介绍”“需求分析”“总结与展望”“参考文献”）合并提取带层级的大纲（一级 + 二级）；当模板只给二级标题编号、一级章节名缺失时会按编号或邻近短标题行自动补回父章节，无编号的“参考文献”等标题也会被识别为独立章节，编号前缀提取后自动清理。未上传或提取为空时以默认大纲为参考。`OutlineAgent` 结合主题、参考层级与已检索文献生成专属层级大纲——一级标题紧扣主题，二级标题优先沿用模板对应结构；LLM 未输出二级标题或解析失败时，自动用模板二级标题补齐（按标题或位置匹配）。
 - **二级标题的使用**：专属大纲的二级标题作为提示词传给 `WriterAgent`，引导各章节内容覆盖对应要点，使生成论文与模板结构保持一致。
+- **模板写法参考（RAG）**：上传模板时，除提取大纲外还会把模板正文按章节结构切片（docx 按标题样式 / 编号切分，pdf 按正文行切分，超长内容按 `TEMPLATE_CHUNK_SIZE` 切分并保留 `TEMPLATE_CHUNK_OVERLAP` 重叠），写入 ChromaDB（以内容哈希为 `template_id`，重传同一模板自动覆盖旧切片）。撰写每个章节时，以「主题 + 章节 + 二级标题」检索最相近的 `TEMPLATE_TOP_K` 个模板片段，作为写法参考注入 `WriterAgent` 提示词（仅借鉴结构与措辞风格，明确要求不照抄原文）。向量库不可用时自动跳过该步骤，不影响生成。
 - **防上下文爆炸**：每个章节生成后由 `SummaryAgent` 压缩为关键信息摘要，以 `paper_summary:{user_id}:{topic}` 存入 Redis 短期记忆；后续修订轮次的 `WriterAgent` 与 `ReviewerAgent` 只接收摘要而非全文。
 - **并发与恢复**：用户级 Redis 锁 `paper_lock:{user_id}` 保证同一用户同时只生成一篇论文；进度写入 `paper_progress:{user_id}:{topic}`，页面刷新后可从 Redis 恢复进度条并从数据库读取已完成章节。
 - **前端页面流转**：首次打开或刷新后默认进入「开始新生成」页面，不自动展示上次内容；仅当检测到该用户仍有进行中（running）的任务时才恢复进度条。生成完成后在页面下方展示结果，点击「开始新生成」即清空并返回新生成页面；历史论文通过侧栏「历史生成记录」查看，详情页同样提供「开始新生成」按钮。
 - **日志**：流水线每个节点输出 `STEP n/total（百分比）| 步骤名` 日志（如文献检索、大纲生成、论文撰写、评审修订、配图生成），在 uvicorn / Streamlit 启动的控制台可见。
 - **进度**：`PaperAssistantAgent.generate()` 支持 `progress_callback(percent, step_name)` 进度回调；进度同时写入 Redis，Streamlit 前端以进度条实时展示百分比与当前步骤。
 - **记忆**：`ShortTermMemory` 在 Redis 不可用时自动降级为进程内内存，便于本地开发；`LongTermMemory` 使用 ChromaDB 持久化向量。
+- **Embedding**：ChromaDB 默认使用内置的本地 ONNX embedding（all-MiniLM-L6-v2），首次使用会自动下载模型（约 80MB，需联网）；如需自定义 embedding，可在 `app/memory/long_term.py` 的 `get_vector_store` 中传入 `embedding_function`。
 - **扩展点**：`WanxImageTool` 与 OSS 上传为预留接口，配置 `ALIYUN_DASHSCOPE_API_KEY` 后接入 DashScope 异步任务接口即可启用。
 - **入口引导**：`app/ui/streamlit_app.py` 启动时向上定位项目根目录并插入 `sys.path` 首位，保证 `app` 包在任何启动目录下都能被正确导入。
 

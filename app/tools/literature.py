@@ -2,11 +2,12 @@
 
 from typing import Literal
 
-import httpx
+import httpx,logging
 from pydantic import BaseModel, Field
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 class PaperReference(BaseModel):
     """标准化后的文献条目。"""
@@ -27,14 +28,18 @@ class LiteratureSearchTool:
         self.client = httpx.Client(timeout=30.0)
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
-        """按主题检索文献，OpenAlex 失败时回退到 Semantic Scholar。"""
+        """按主题检索文献，OpenAlex 失败时回退到 Semantic Scholar，都失败降级为空列表"""
         try:
             results = self.search_openalex(query, limit)
             if results:
                 return results
+            results = self.search_semantic_scholar(query, limit)
+            if results:
+                return results
         except httpx.HTTPError:
-            pass  # 网络异常时回退
-        return self.search_semantic_scholar(query, limit)
+            pass
+        logger.info("未检索到文献，返回空列表")
+        return []
 
     def search_openalex(self, query: str, limit: int = 5) -> list[dict]:
         """调用 OpenAlex works 接口检索文献。"""

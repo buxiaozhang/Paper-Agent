@@ -12,6 +12,7 @@ import re
 from io import BytesIO
 from pathlib import Path
 
+# 软工实现
 DEFAULT_SECTIONS = ["绪论", "相关技术", "系统分析", "功能需求分析", "系统设计","系统实现","系统测试","总结与展望","参考文献"]
 
 _HEADING_STYLE_MARKERS = ("heading", "标题", "toc")

@@ -13,6 +13,7 @@ from app.tools.outline import (
     resolve_sections,
     split_structure,
 )
+from app.tools.template_index import TemplateIndex, TemplateIndexResult, chunk_template
 
 __all__ = [
     "LiteratureSearchTool",
@@ -29,4 +30,7 @@ __all__ = [
     "extract_text_from_docx",
     "render_docx_template",
     "build_paper_docx",
+    "TemplateIndex",
+    "TemplateIndexResult",
+    "chunk_template",
 ]

@@ -15,6 +15,7 @@ from app.graph.state import PaperState
 from app.memory.short_term import ShortTermMemory, summary_key
 from app.tools.literature import LiteratureSearchTool
 from app.tools.outline import DEFAULT_SECTIONS, resolve_sections, split_structure
+from app.tools.template_index import TemplateIndex
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def build_graph(
     literature_tool: LiteratureSearchTool,
     short_memory: ShortTermMemory,
     store: PaperStore,
+    template_index: TemplateIndex | None = None,
 ):
     """构建并编译论文生成流水线。"""
 
@@ -36,8 +38,9 @@ def build_graph(
         topic = state.get("topic", "")
         logger.info("节点开始：文献检索（主题：%s）", topic)
         references = literature_tool.search(topic, limit=10)
-        logger.info("节点完成：文献检索，命中 %d 篇文献", len(references))
-        logger.info("文献内容：%s",references)
+        if references:
+            logger.info("节点完成：文献检索，命中 %d 篇文献", len(references))
+            logger.info("文献内容：%s", references)
         researcher.run(topic, references)  # 生成背景综述（暂存于后续草稿流程）
         return {"references": references, "status": "researching", "step": "文献检索"}
 
@@ -85,17 +88,31 @@ def build_graph(
         previous_summaries = state.get("section_summaries") or {}
         subsections_map = state.get("section_subsections") or {}
         revision = state.get("revision_count", 0) + 1
+        template_id = state.get("template_id")
         logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
         parts, texts, summaries = [], [], {}
         for section in sections:
+            subsections = subsections_map.get(section) or []
+            template_examples: list[str] = []
+            if template_index is not None and template_id:
+                # 用「主题 + 章节 + 二级标题」检索模板写法参考
+                query = " ".join(filter(None, [topic, section, *subsections[:4]]))
+                template_examples = template_index.search(template_id, query)
+                if template_examples:
+                    logger.info(
+                        "章节「%s」检索到 %d 条模板写法参考",
+                        section,
+                        len(template_examples),
+                    )
             # 将短期记忆传给大模型，只传关键信息摘要，避免上下文过长 / token 过多
             text = writer.run(
                 topic,
                 section,
                 feedback,
                 previous_summaries,
-                subsections_map.get(section),
-                references
+                subsections,
+                references,
+                template_examples=template_examples,
 
             )
             texts.append(text)

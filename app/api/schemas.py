@@ -9,6 +9,7 @@ class PaperGenerateRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500, description="论文主题 / 研究问题")
     max_revisions: int = Field(2, ge=1, le=5, description="评审-修订最大轮数")
     user_id: str = Field("default", min_length=1, max_length=128, description="用户 ID")
+    template_id: str | None = Field(None, description="模板切片在向量库中的 ID（写作时检索写法参考）")
 
 
 class PaperGenerateResponse(BaseModel):
@@ -38,6 +39,7 @@ class OutlineResponse(BaseModel):
     source: str            # 模板文件类型：docx / pdf
     sections: list[str]
     structure: list[dict]  # 层级大纲：[{"level": 1|2, "title": ...}]
+    template_id: str | None = None  # 模板切片向量化后的 ID
 
 
 class ProgressResponse(BaseModel):

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # ---------- 向量数据库 ----------
     chroma_dir: str = "./data/chroma"
     chroma_collection: str = "paper_agent_memory"
+    template_chunk_size: int = 800   # 模板切片大小（字符）
+    template_chunk_overlap: int = 100  # 固定长度切片的重叠字符（PDF 等无标题场景）
+    template_top_k: int = 3          # 撰写每个章节时检索的模板参考片段数
 
     # ---------- 对象存储 OSS ----------
     oss_access_key_id: str | None = None

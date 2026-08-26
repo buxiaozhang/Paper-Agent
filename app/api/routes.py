@@ -1,5 +1,6 @@
 """FastAPI 路由：论文生成接口。"""
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -17,11 +18,14 @@ from app.api.schemas import (
 )
 from app.db.store import PaperStore
 from app.tools.outline import extract_outline, extract_outline_structure
+from app.tools.template_index import TemplateIndex
 
 router = APIRouter()
 assistant = PaperAssistantAgent()
 store = PaperStore()
 store.init_db()
+template_index = TemplateIndex()
+logger = logging.getLogger(__name__)
 
 TEMPLATE_EXTENSIONS = {".docx", ".pdf"}
 
@@ -39,6 +43,7 @@ def generate_paper(request: PaperGenerateRequest) -> PaperGenerateResponse:
         result = assistant.generate(
             request.topic,
             max_revisions=request.max_revisions,
+            template_id=request.template_id,
             user_id=request.user_id,
         )
     except PaperBusyError as exc:
@@ -59,12 +64,14 @@ async def extract_template_outline(
     sections, structure = _parse_template(filename, content)
     if not sections:
         raise HTTPException(status_code=400, detail="未能从模板中提取到大纲")
+    template_id = _index_template(filename, content, user_id="default")
     suffix = Path(filename).suffix.lower().lstrip(".")
     return OutlineResponse(
         filename=filename,
         source=suffix,
         sections=sections,
         structure=structure or [],
+        template_id=template_id,
     )
 
 
@@ -82,15 +89,20 @@ async def generate_paper_with_template(
     """上传模板生成论文：模板大纲优先，未上传时使用默认大纲。"""
     template_outline: list[str] | None = None
     template_hierarchy: list[dict] | None = None
+    template_id: str | None = None
     if file is not None:
         filename, content = await _read_template_content(file)
         template_outline, template_hierarchy = _parse_template(filename, content)
+        logger.info("解析出的template_outline:::::%s", template_outline)
+        logger.info("解析出的template_hierarchy:::::%s", template_hierarchy)
+        template_id = _index_template(filename, content, user_id=user_id)
     try:
         result = assistant.generate(
             topic,
             max_revisions=max_revisions,
             template_outline=template_outline,
             template_hierarchy=template_hierarchy,
+            template_id=template_id,
             user_id=user_id,
         )
     except PaperBusyError as exc:
@@ -150,3 +162,12 @@ def _parse_template(filename: str, content: bytes) -> tuple[list[str], list[dict
         return outline, hierarchy
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"模板解析失败：{exc}") from exc
+
+
+def _index_template(filename: str, content: bytes, user_id: str) -> str | None:
+    """模板切片向量化；失败时仅告警并返回 None（不影响大纲提取与生成）。"""
+    try:
+        return template_index.index_template(filename, content, user_id=user_id).template_id
+    except Exception:
+        logger.warning("模板向量化失败，本次生成不提供模板写法参考", exc_info=True)
+        return None

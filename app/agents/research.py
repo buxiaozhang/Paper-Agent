@@ -22,7 +22,7 @@ class ResearchAgent(BaseAgent):
         )
         prompt = (
             f"你是学术研究助手，请围绕主题「{topic}」撰写研究背景与相关工作综述。\n"
-            f"参考以下文献：\n{ref_text or '（暂无检索结果，请给出一般性背景介绍）'}"
+            f"参考以下文献：\n{ref_text or '（如果没有文献，则不在使用文献，不可自己生成文献）'}"
         )
         response = self.llm.invoke(prompt)
         return str(response.content)
@@ -42,6 +42,7 @@ class WriterAgent(BaseAgent):
         section_summaries: dict[str, str] | None = None,
         subsections: list[str] | None = None,
         references: list[str] | None = None,
+        template_examples: list[str] | None = None,
     ) -> str:
         """生成单个章节的正文。
 
@@ -49,6 +50,8 @@ class WriterAgent(BaseAgent):
             section_summaries: 此前各章节的关键信息摘要，用于保持连贯、
                 避免重复（防止直接拼接全文导致上下文爆炸）。
             subsections: 本节参考二级标题（写作提示，内容应覆盖这些要点）。
+            template_examples: 从向量库检索到的模板相近章节片段（仅借鉴
+                结构、措辞风格与论证思路，不得照抄）。
         """
         # 学术写作助手
         prompt = (
@@ -64,6 +67,16 @@ class WriterAgent(BaseAgent):
         if subsections:
             subs_text = "\n".join(f"- {s}" for s in subsections)
             prompt += f"\n本节参考二级标题（内容应覆盖这些要点）：\n{subs_text}"
+        if template_examples:
+            examples_text = "\n\n".join(
+                f"【模板参考 {i}】{example[:800]}"
+                for i, example in enumerate(template_examples, 1)
+            )
+            prompt += (
+                "\n以下是与本章节内容相近的模板写法片段（仅借鉴其结构、"
+                "措辞风格与论证思路，内容必须围绕本论文主题原创，严禁照抄原文）：\n"
+                f"{examples_text}"
+            )
         response = self.llm.invoke(prompt)
         return str(response.content)
 

@@ -34,7 +34,24 @@ class LongTermMemory:
         """向量化并存储文本及其元数据。"""
         self.store.add_texts(texts=texts, metadatas=metadatas)
 
-    def search(self, query: str, top_k: int = 4) -> list[tuple[str, dict]]:
-        """相似性检索：返回 (文本, 元数据) 列表。"""
-        results = self.store.similarity_search(query, k=top_k)
+    def search(
+        self,
+        query: str,
+        top_k: int = 4,
+        where: dict | None = None,
+    ) -> list[tuple[str, dict]]:
+        """相似性检索：返回 (文本, 元数据) 列表。
+
+        Args:
+            where: Chroma 元数据过滤条件（如 {"template_id": "..."}），
+                用于限定检索范围到特定模板。
+        """
+        results = self.store.similarity_search(query, k=top_k, filter=where)
         return [(doc.page_content, doc.metadata) for doc in results]
+
+    def delete_by_metadata(self, where: dict) -> None:
+        """按元数据条件删除向量（用于模板重新上传时清理旧切片）。"""
+        collection = getattr(self.store, "_collection", None)
+        if collection is None:
+            return
+        collection.delete(where=where)

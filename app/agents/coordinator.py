@@ -13,6 +13,7 @@ from app.db.store import PaperStore
 from app.graph.builder import build_graph
 from app.memory.short_term import ShortTermMemory, lock_key
 from app.tools.literature import LiteratureSearchTool
+from app.tools.template_index import TemplateIndex
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class PaperAssistantAgent:
         self.short_memory = short_memory or ShortTermMemory()
         self.store = store or PaperStore()
         self.store.init_db()
+        self.template_index = TemplateIndex()
         self.graph = build_graph(
             researcher=self.researcher,
             outline_agent=self.outliner,
@@ -53,6 +55,7 @@ class PaperAssistantAgent:
             literature_tool=self.literature,
             short_memory=self.short_memory,
             store=self.store,
+            template_index=self.template_index,
         )
 
     def generate(
@@ -61,6 +64,7 @@ class PaperAssistantAgent:
         max_revisions: int = 2,
         template_outline: list[str] | None = None,
         template_hierarchy: list[dict] | None = None,
+        template_id: str | None = None,
         progress_callback: ProgressCallback | None = None,
         user_id: str = "default",
     ) -> dict:
@@ -71,6 +75,7 @@ class PaperAssistantAgent:
             max_revisions: 评审-修订最大轮数。
             template_outline: 从上传模板提取的大纲；为 None 时使用默认大纲。
             template_hierarchy: 模板层级（一级 + 二级标题），作为大纲 Agent 的参考。
+            template_id: 模板切片在向量库中的 ID；提供时写作阶段会检索模板写法参考。
             progress_callback: 进度回调，参数为 (百分比, 当前步骤名)。
             user_id: 用户 ID（用于锁、进度与历史记录）。
         """
@@ -126,6 +131,7 @@ class PaperAssistantAgent:
                 "draft": "",
                 "template_outline": template_outline,
                 "template_hierarchy": template_hierarchy,
+                "template_id": template_id,
             }
             for state in self.graph.stream(initial_state, stream_mode="values"):
                 step_name = state.get("step")

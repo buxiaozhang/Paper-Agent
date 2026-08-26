@@ -3,6 +3,7 @@
 运行：streamlit run app/ui/streamlit_app.py
 """
 
+import hashlib
 import sys
 import threading
 import time
@@ -46,11 +47,13 @@ from app.db.store import PaperStore
 from app.memory.short_term import ShortTermMemory, lock_key, progress_key
 from app.tools.document import build_paper_docx
 from app.tools.outline import extract_outline, extract_outline_structure
+from app.tools.template_index import TemplateIndex
 
 # UI、生成线程与数据库共用同一批实例，保证无 Redis 时进程内数据仍互通
 memory = ShortTermMemory()
 store = PaperStore()
 store.init_db()
+template_index = TemplateIndex()
 
 PROGRESS_STALE_SECONDS = 7200
 
@@ -182,21 +185,45 @@ else:
 
     template_outline: list[str] | None = None
     template_hierarchy: list[dict] | None = None
+    template_id: str | None = None
     if uploaded_template is not None:
-        try:
-            content = uploaded_template.getvalue()
-            template_outline = extract_outline(uploaded_template.name, content)
-            template_hierarchy = extract_outline_structure(uploaded_template.name, content)
-            st.success(f"已从模板提取 {len(template_outline)} 个一级章节：")
+        content = uploaded_template.getvalue()
+        cache_key = f"{uploaded_template.name}:{hashlib.sha256(content).hexdigest()[:12]}"
+        # 会话内缓存解析与向量化结果，避免每次 rerun 重复解析 / 重复向量化模板
+        if st.session_state.get("template_cache_key") == cache_key:
+            template_outline = st.session_state.get("template_outline_cache")
+            template_hierarchy = st.session_state.get("template_hierarchy_cache")
+            template_id = st.session_state.get("template_id_cache")
+        else:
+            try:
+                template_outline = extract_outline(uploaded_template.name, content)
+                template_hierarchy = extract_outline_structure(uploaded_template.name, content)
+                st.success(f"已从模板提取 {len(template_outline)} 个一级章节：")
+                try:
+                    index_result = template_index.index_template(
+                        uploaded_template.name, content, user_id=user_id
+                    )
+                    template_id = index_result.template_id
+                    st.info(
+                        f"模板已切片写入向量库（{index_result.chunk_count} 个片段），"
+                        "写作时将参考模板写法"
+                    )
+                except Exception as exc:
+                    st.warning(f"模板向量化失败（不影响生成，但不提供模板写法参考）：{exc}")
+            except Exception:
+                template_outline = None
+                template_hierarchy = None
+                st.error("模板解析失败，本次生成将使用默认大纲")
+            st.session_state["template_cache_key"] = cache_key
+            st.session_state["template_outline_cache"] = template_outline
+            st.session_state["template_hierarchy_cache"] = template_hierarchy
+            st.session_state["template_id_cache"] = template_id
+        if template_hierarchy:
             preview = []
             for item in template_hierarchy:
                 prefix = "    - " if item.get("level", 1) == 2 else "- "
                 preview.append(f"{prefix}{item.get('title', '')}")
             st.caption("\n".join(preview))
-        except Exception:
-            template_outline = None
-            template_hierarchy = None
-            st.error("模板解析失败，本次生成将使用默认大纲")
 
     # ---------- 刷新恢复：仅跟踪进行中的任务；历史完成内容不自动展示 ----------
     active = memory.find_active_progress(user_id)
@@ -226,6 +253,7 @@ else:
                     max_revisions=max_revisions,
                     template_outline=template_outline,
                     template_hierarchy=template_hierarchy,
+                    template_id=template_id,
                     user_id=user_id,
                 )
             except Exception as exc:
