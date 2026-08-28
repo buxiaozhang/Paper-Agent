@@ -18,7 +18,7 @@ class PaperState(TypedDict, total=False):
     template_outline: list[str] | None  # 从上传模板提取的大纲（优先于默认大纲）
     template_hierarchy: list[dict] | None  # 模板层级（一级 + 二级标题）
     template_id: str | None     # 模板切片在向量库中的 ID（写作时检索写法参考）
-    section_subsections: dict[str, list[str]]  # 专属大纲的二级标题（{一级: [二级...]}）
+    section_subsections: dict[str, list[dict]]  # 专属大纲下级标题（{一级: [{"title": 二级, "subsections": [三级...]}]}）
     section_summaries: dict[str, str]   # 各章节关键信息摘要（短期记忆上下文）
     draft: str                  # 当前草稿全文
     references: list[dict]      # 检索到的文献列表

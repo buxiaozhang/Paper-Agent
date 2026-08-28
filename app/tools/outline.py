@@ -1,7 +1,7 @@
-"""大纲提取工具：从 docx / pdf 模板中提取章节大纲（含一级 / 二级层级）。
+"""大纲提取工具：从 docx / pdf 模板中提取章节大纲（含一级 / 二级 / 三级层级）。
 
-- docx：标题样式（Heading 1 / 2、标题 1 / 2、TOC 层级）与编号 / 关键词启发式
-  合并提取；无样式时按编号（1. / 1.1 / 第X章）推断层级。缺失一级父章节时
+- docx：标题样式（Heading 1 / 2 / 3、标题 1 / 2 / 3、TOC 层级）与编号 / 关键词启发式
+  合并提取；无样式时按编号（1. / 1.1 / 1.1.1 / 第X章）推断层级。缺失一级父章节时
   （如模板仅给二级标题加样式、章节名未加样式），按编号 / 邻近短标题行修复补回。
 - pdf：优先读取书签层级；无书签时按文本编号启发式，并同样修复缺失的父章节。
 - 未上传模板或提取为空时回退默认一级大纲。
@@ -17,7 +17,7 @@ DEFAULT_SECTIONS = ["绪论", "相关技术", "系统分析", "功能需求分�
 
 _HEADING_STYLE_MARKERS = ("heading", "标题", "toc")
 _MAX_HEADING_LENGTH = 60
-_MAX_LEVEL = 2
+_MAX_LEVEL = 3
 
 # 编号前缀：1. / 1.1 / 1.1.1 或（1）（1.1）
 _NUMBER_PREFIX = re.compile(r"^\s*[（(]?(\d+(?:\.\d+)*)[)）]?\s*[.、:：)）]?\s*")
@@ -49,7 +49,7 @@ def extract_outline(filename: str, content: bytes) -> list[str]:
 
 
 def extract_outline_structure(filename: str, content: bytes) -> list[dict]:
-    """提取带层级的大纲：[{"level": 1|2, "title": ...}, ...]（按出现顺序）。"""
+    """提取带层级的大纲：[{"level": 1|2|3, "title": ...}, ...]（按出现顺序）。"""
     suffix = Path(filename or "").suffix.lower()
     if suffix == ".pdf":
         return extract_structure_from_pdf(content)
@@ -99,48 +99,106 @@ def extract_structure_from_pdf(content: bytes) -> list[dict]:
 
 
 # ---------- 层级工具 ----------
-def split_structure(structure: list[dict]) -> tuple[list[str], dict[str, list[str]]]:
-    """把大纲拆分为（一级标题列表, {一级标题: 二级标题列表}）。
+def split_structure(structure: list[dict]) -> tuple[list[str], dict[str, list[dict]]]:
+    """把大纲拆分为（一级标题列表, {一级标题: 二级(含三级)嵌套列表}）。
 
     兼容两种输入：
-    - 扁平层级：[{"level": 1|2, "title": ...}]（模板提取结果）
+    - 扁平层级：[{"level": 1|2|3, "title": ...}]（模板提取结果）
     - 嵌套结构：[{"title": ..., "subsections": [...]}]（OutlineAgent 输出）
+    返回的 subsections 统一为 [{"title": 二级标题, "subsections": [三级标题...]}]。
     """
     sections: list[str] = []
-    subsections: dict[str, list[str]] = {}
+    subsections: dict[str, list[dict]] = {}
     for item in structure or []:
         title = (item.get("title") or "").strip()
         if not title:
             continue
-        if "subsections" in item:
+        if "level" in item:
+            level = min(int(item.get("level", 1)), _MAX_LEVEL)
+            if level == 1:
+                sections.append(title)
+                subsections.setdefault(title, [])
+            elif level == 2 and sections:
+                subsections.setdefault(sections[-1], []).append(
+                    {"title": title, "subsections": []}
+                )
+            elif level == 3 and sections:
+                parent = subsections.setdefault(sections[-1], [])
+                if parent:
+                    parent[-1].setdefault("subsections", []).append(title)
+                else:
+                    parent.append({"title": title, "subsections": []})
+        else:
+            # 嵌套结构（OutlineAgent 输出）
             sections.append(title)
-            subsections[title] = [s for s in item.get("subsections") or [] if s]
-        elif item.get("level", 1) == 1:
-            sections.append(title)
-            subsections.setdefault(title, [])
-        elif sections:
-            subsections[sections[-1]].append(title)
+            subsections[title] = normalize_subsections(item.get("subsections"))
     return sections, subsections
 
 
 def hierarchy_to_text(hierarchy: list[dict] | None) -> str:
-    """层级大纲 -> 缩进文本（供 LLM 提示词使用）。"""
+    """层级大纲 -> 缩进文本（供 LLM 提示词使用，支持到三级标题）。"""
     lines: list[str] = []
     section_no = 0
     sub_no = 0
+    subsub_no = 0
     for item in hierarchy or []:
         title = item.get("title", "")
         if not title:
             continue
-        if item.get("level", 1) == 1:
+        level = min(int(item.get("level", 1)), _MAX_LEVEL)
+        if level == 1:
             section_no += 1
             sub_no = 0
+            subsub_no = 0
             lines.append(f"{section_no}. {title}")
-            continue
-        # 二级标题挂在最近的一级标题下
-        sub_no += 1
-        lines.append(f"  {section_no}.{sub_no} {title}")
+        elif level == 2:
+            sub_no += 1
+            subsub_no = 0
+            lines.append(f"  {section_no}.{sub_no} {title}")
+        else:
+            subsub_no += 1
+            lines.append(f"    {section_no}.{sub_no}.{subsub_no} {title}")
     return "\n".join(lines)
+
+
+def normalize_subsections(subsections) -> list[dict]:
+    """把二级标题统一为嵌套结构 [{"title":..., "subsections":[...]}]，兼容旧 list[str]。"""
+    result: list[dict] = []
+    for item in subsections or []:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                result.append({"title": text, "subsections": []})
+        elif isinstance(item, dict):
+            text = (item.get("title") or "").strip()
+            if not text:
+                continue
+            children = [
+                s.strip()
+                for s in item.get("subsections") or []
+                if isinstance(s, str) and s.strip()
+            ]
+            result.append({"title": text, "subsections": children})
+    return result
+
+
+def flatten_subsection_titles(subsections) -> list[str]:
+    """把嵌套二级标题展平为标题列表（二级在前、三级在后），用于检索关键词。"""
+    titles: list[str] = []
+    for item in normalize_subsections(subsections):
+        titles.append(item["title"])
+        titles.extend(item["subsections"])
+    return titles
+
+
+def render_subsections(section_no: int, subsections) -> list[str]:
+    """把嵌套二级标题渲染为带编号的文本行，供写作提示使用。"""
+    lines: list[str] = []
+    for i, item in enumerate(normalize_subsections(subsections), 1):
+        lines.append(f"{section_no}.{i} {item['title']}")
+        for j, sub in enumerate(item["subsections"], 1):
+            lines.append(f"  {section_no}.{i}.{j} {sub}")
+    return lines
 
 
 def resolve_sections(template_outline: list[str] | None) -> list[str]:
@@ -161,7 +219,7 @@ def _style_level(style_name: str) -> int | None:
 
 
 def _detect_level(text: str) -> int | None:
-    """按编号前缀推断层级：1. -> 1；1.1 -> 2；第X章 -> 1；第X节 -> 2。"""
+    """按编号前缀推断层级：1. -> 1；1.1 -> 2；1.1.1 -> 3；第X章 -> 1；第X节 -> 2。"""
     match = _NUMBER_PREFIX.match(text)
     if match:
         return min(len(match.group(1).split(".")), _MAX_LEVEL)

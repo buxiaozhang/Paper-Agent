@@ -14,7 +14,13 @@ from app.db.store import PaperStore
 from app.graph.state import PaperState
 from app.memory.short_term import ShortTermMemory, summary_key
 from app.tools.literature import LiteratureSearchTool
-from app.tools.outline import DEFAULT_SECTIONS, resolve_sections, split_structure
+from app.tools.outline import (
+    DEFAULT_SECTIONS,
+    flatten_subsection_titles,
+    render_subsections,
+    resolve_sections,
+    split_structure,
+)
 from app.tools.template_index import TemplateIndex
 
 logger = logging.getLogger(__name__)
@@ -62,7 +68,7 @@ def build_graph(
         )
         sections, subsections_map = split_structure(structure)
         logger.info("生成的专属模板大纲%s", sections)
-        logger.info("二级标题映射%s", subsections_map)
+        logger.info("下级标题映射%s", subsections_map)
         logger.info("节点完成：大纲生成，共 %d 个章节", len(sections))
         title = f"{topic}：一项基于大四水平的软件工程专业的论文"
         paper_id = state.get("paper_id")
@@ -91,12 +97,13 @@ def build_graph(
         template_id = state.get("template_id")
         logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
         parts, texts, summaries = [], [], {}
-        for section in sections:
+        for section_index, section in enumerate(sections, 1):
             subsections = subsections_map.get(section) or []
             template_examples: list[str] = []
             if template_index is not None and template_id:
-                # 用「主题 + 章节 + 二级标题」检索模板写法参考
-                query = " ".join(filter(None, [topic, section, *subsections[:4]]))
+                # 用「主题 + 章节 + 下级标题」检索模板写法参考
+                subsection_titles = flatten_subsection_titles(subsections)
+                query = " ".join(filter(None, [topic, section, *subsection_titles[:8]]))
                 template_examples = template_index.search(template_id, query)
                 if template_examples:
                     logger.info(
@@ -104,13 +111,15 @@ def build_graph(
                         section,
                         len(template_examples),
                     )
+            # 渲染带编号的下级标题，作为写作提示
+            writer_subsections = render_subsections(section_index, subsections)
             # 将短期记忆传给大模型，只传关键信息摘要，避免上下文过长 / token 过多
             text = writer.run(
                 topic,
                 section,
                 feedback,
                 previous_summaries,
-                subsections,
+                writer_subsections,
                 references,
                 template_examples=template_examples,
 

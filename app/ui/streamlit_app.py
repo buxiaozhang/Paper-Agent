@@ -91,7 +91,12 @@ def _render_paper(paper: dict) -> None:
         for item in paper["outline"]:
             st.markdown(f"- {item.get('title', '')}")
             for sub in item.get("subsections", []):
-                st.markdown(f"    - {sub}")
+                if isinstance(sub, dict):
+                    st.markdown(f"    - {sub.get('title', '')}")
+                    for subsub in sub.get("subsections", []):
+                        st.markdown(f"        - {subsub}")
+                else:
+                    st.markdown(f"    - {sub}")
     for section in paper.get("sections", []):
         with st.expander(f"{section['title']}（摘要：{(section.get('summary') or '')[:80]}）"):
             st.markdown(section["content"])
@@ -221,7 +226,13 @@ else:
         if template_hierarchy:
             preview = []
             for item in template_hierarchy:
-                prefix = "    - " if item.get("level", 1) == 2 else "- "
+                level = item.get("level", 1)
+                if level == 3:
+                    prefix = "        - "
+                elif level == 2:
+                    prefix = "    - "
+                else:
+                    prefix = "- "
                 preview.append(f"{prefix}{item.get('title', '')}")
             st.caption("\n".join(preview))
 

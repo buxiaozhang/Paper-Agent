@@ -49,7 +49,7 @@ class WriterAgent(BaseAgent):
         Args:
             section_summaries: 此前各章节的关键信息摘要，用于保持连贯、
                 避免重复（防止直接拼接全文导致上下文爆炸）。
-            subsections: 本节参考二级标题（写作提示，内容应覆盖这些要点）。
+            subsections: 本节参考下级标题（写作提示，内容应覆盖这些要点）。
             template_examples: 从向量库检索到的模板相近章节片段（仅借鉴
                 结构、措辞风格与论证思路，不得照抄）。
         """
@@ -66,7 +66,7 @@ class WriterAgent(BaseAgent):
             prompt += f"\n此前各章节关键信息（保持连贯、避免重复）：\n{context}"
         if subsections:
             subs_text = "\n".join(f"- {s}" for s in subsections)
-            prompt += f"\n本节参考二级标题（内容应覆盖这些要点）：\n{subs_text}"
+            prompt += f"\n本节参考下级标题（内容应覆盖这些要点）：\n{subs_text}"
         if template_examples:
             examples_text = "\n\n".join(
                 f"【模板参考 {i}】{example[:800]}"

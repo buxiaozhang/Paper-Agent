@@ -93,8 +93,13 @@ async def generate_paper_with_template(
     if file is not None:
         filename, content = await _read_template_content(file)
         template_outline, template_hierarchy = _parse_template(filename, content)
-        logger.info("解析出的template_outline:::::%s", template_outline)
-        logger.info("解析出的template_hierarchy:::::%s", template_hierarchy)
+        level2_count = sum(1 for item in (template_hierarchy or []) if item.get("level") == 2)
+        logger.info(
+            "解析出模板大纲：一级 %d 个、二级 %d 个；一级标题=%s",
+            len(template_outline or []),
+            level2_count,
+            template_outline,
+        )
         template_id = _index_template(filename, content, user_id=user_id)
     try:
         result = assistant.generate(

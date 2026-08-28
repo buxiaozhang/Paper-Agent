@@ -38,7 +38,7 @@ class OutlineResponse(BaseModel):
     filename: str
     source: str            # 模板文件类型：docx / pdf
     sections: list[str]
-    structure: list[dict]  # 层级大纲：[{"level": 1|2, "title": ...}]
+    structure: list[dict]  # 层级大纲：[{"level": 1|2|3, "title": ...}]
     template_id: str | None = None  # 模板切片向量化后的 ID
 
 
@@ -74,11 +74,18 @@ class SectionItem(BaseModel):
     summary: str
 
 
-class OutlineItem(BaseModel):
-    """大纲表条目：一级标题及其二级标题。"""
+class OutlineSubsection(BaseModel):
+    """大纲二级标题项：含其下的三级标题。"""
 
     title: str
-    subsections: list[str]
+    subsections: list[str] = Field(default_factory=list)
+
+
+class OutlineItem(BaseModel):
+    """大纲表条目：一级标题及其二级标题（含三级）。"""
+
+    title: str
+    subsections: list[OutlineSubsection] = Field(default_factory=list)
 
 
 class PaperDetailResponse(BaseModel):

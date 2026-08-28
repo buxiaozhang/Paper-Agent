@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.db.models import Base, PaperOutline, PaperRecord, PaperSection
+from app.tools.outline import normalize_subsections
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class PaperStore:
                 "created_at": _iso(record.created_at),
                 "updated_at": _iso(record.updated_at),
                 "outline": [
-                    {"title": o.title, "subsections": list(o.subsections or [])}
+                    {"title": o.title, "subsections": normalize_subsections(o.subsections)}
                     for o in outlines
                 ],
                 "sections": [
@@ -132,7 +133,7 @@ class PaperStore:
 
     # ---------- 大纲 ----------
     def save_outline(self, paper_id: int, structure: list[dict]) -> None:
-        """覆盖写入大纲表。structure: [{"title": 一级标题, "subsections": [二级...]}]"""
+        """覆盖写入大纲表。structure: [{"title": 一级, "subsections": [{"title": 二级, "subsections": [三级...]}]}]"""
         with Session(self.engine) as session:
             session.execute(delete(PaperOutline).where(PaperOutline.paper_id == paper_id))
             for index, item in enumerate(structure):
