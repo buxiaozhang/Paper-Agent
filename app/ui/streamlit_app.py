@@ -143,6 +143,22 @@ def _load_and_render(paper_id: int) -> None:
         st.warning("未在数据库中找到该论文记录")
 
 
+def _render_download_button(paper_id: int | None) -> None:
+    """根据数据库中的论文生成并展示 Word 草稿下载按钮。"""
+    paper = store.get_paper(paper_id) if paper_id else None
+    if not paper or not paper.get("sections"):
+        st.caption("暂无章节内容，无法导出草稿")
+        return
+    try:
+        sections = {s["title"]: s["content"] for s in paper["sections"]}
+        title = paper.get("title") or paper.get("topic") or "论文"
+        build_paper_docx(title, sections, "paper_draft.docx")
+        with open("paper_draft.docx", "rb") as f:
+            st.download_button("下载 Word 草稿", f, file_name="paper.docx")
+    except OSError:
+        st.warning("Word 导出暂不可用")
+
+
 def _start_new_generation() -> None:
     """清空上一次展示的内容，回到新生成页面。"""
     st.session_state["view"] = "generate"
@@ -182,6 +198,7 @@ if st.session_state["view"] == "paper":
         st.rerun()
     st.markdown("### 历史论文详情")
     _load_and_render(st.session_state["view_paper_id"])
+    _render_download_button(st.session_state["view_paper_id"])
 else:
     # ============ 新生成页面 ============
     user_id = st.text_input("用户 ID", value="default_user", help="同一用户同时只能生成一篇论文")
@@ -362,14 +379,4 @@ else:
         with col_tip:
             st.success("生成完成，已持久化到数据库")
         _load_and_render(st.session_state["result_paper_id"])
-
-        # 导出 .docx（基于数据库中最新章节）
-        try:
-            paper = store.get_paper(st.session_state["result_paper_id"])
-            if paper and paper.get("sections"):
-                sections = {s["title"]: s["content"] for s in paper["sections"]}
-                build_paper_docx(paper.get("title") or topic, sections, "paper_draft.docx")
-                with open("paper_draft.docx", "rb") as f:
-                    st.download_button("下载 Word 草稿", f, file_name="paper.docx")
-        except OSError:
-            st.warning("Word 导出暂不可用")
+        _render_download_button(st.session_state["result_paper_id"])

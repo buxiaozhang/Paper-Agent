@@ -59,7 +59,7 @@ class WriterAgent(BaseAgent):
         # 学术写作助手
         prompt = (
             f"你是一名即将毕业的大四软件工程的优秀学生，请为论文「{topic}」撰写章节「{section}」的正文，"
-            f"如果本章节是文献的话，请将{references}中的文献输入，而不是自己构建文献"
+            f"如果标题是文献的话，请将{references}中的文献输入，而不是自己构建文献，否则不输出文献"
             "要求学术规范、语言严谨。"
         )
         if feedback:

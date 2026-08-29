@@ -184,7 +184,7 @@ def build_graph(
         images = ImageAgent().run(state.get("topic", ""))
         # images = [{"status": "placeholder", "note": "暂时搁置生图agent"}]
         logger.info("节点完成：配图生成，返回 %d 条结果", len(images))
-        return {"images": images, "step": "配图生成"}
+        return {"images": images, "status": "done", "step": "配图生成"}
 
     def should_continue(state: PaperState) -> str:
         """条件边：评审通过或达到修订上限则进入配图，否则回到撰写节点。"""
@@ -193,6 +193,12 @@ def build_graph(
         if state.get("revision_count", 0) >= state.get("max_revisions", 1):
             return "image"
         return "writer"
+
+    def after_writer(state: PaperState) -> str:
+        """撰写节点后：仅一轮（max_revisions <= 1）时无需评审，直接进入配图。"""
+        if state.get("max_revisions", 1) <= 1:
+            return "image"
+        return "reviewer"
 
     builder = StateGraph(PaperState)
     builder.add_node("researcher", research_node)
@@ -204,7 +210,11 @@ def build_graph(
     builder.add_edge(START, "researcher")
     builder.add_edge("researcher", "outline")
     builder.add_edge("outline", "writer")
-    builder.add_edge("writer", "reviewer")
+    builder.add_conditional_edges(
+        "writer",
+        after_writer,
+        {"reviewer": "reviewer", "image": "image"},
+    )
     builder.add_conditional_edges(
         "reviewer",
         should_continue,

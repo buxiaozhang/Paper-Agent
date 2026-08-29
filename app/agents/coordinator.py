@@ -121,8 +121,9 @@ class PaperAssistantAgent:
             # 历史表：新建生成记录
             paper_id = self.store.create_record(user_id, topic)
             emit(0, "准备开始")
-            # 预估总步数：检索 / 大纲 / 撰写 / 评审 / 配图 + 每次修订的撰写与评审
-            total_steps = 5 + max_revisions * 2
+            # 预估总步数：检索 / 大纲 / 撰写 / 评审 / 配图 + 每次修订的撰写与评审；
+            # 单轮（max_revisions <= 1）时跳过评审，仅 检索 / 大纲 / 撰写 / 配图 四步。
+            total_steps = 4 if max_revisions <= 1 else 3 + max_revisions * 2
             visited = 0
             result = None
             initial_state = {
