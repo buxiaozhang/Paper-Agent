@@ -65,6 +65,7 @@ class PaperAssistantAgent:
         template_outline: list[str] | None = None,
         template_hierarchy: list[dict] | None = None,
         template_id: str | None = None,
+        readme_id: str | None = None,
         progress_callback: ProgressCallback | None = None,
         user_id: str = "default",
     ) -> dict:
@@ -76,6 +77,7 @@ class PaperAssistantAgent:
             template_outline: 从上传模板提取的大纲；为 None 时使用默认大纲。
             template_hierarchy: 模板层级（一级 + 二级标题），作为大纲 Agent 的参考。
             template_id: 模板切片在向量库中的 ID；提供时写作阶段会检索模板写法参考。
+            readme_id: README 切片在向量库中的 ID；提供时写作阶段会检索项目背景/需求参考。
             progress_callback: 进度回调，参数为 (百分比, 当前步骤名)。
             user_id: 用户 ID（用于锁、进度与历史记录）。
         """
@@ -132,6 +134,7 @@ class PaperAssistantAgent:
                 "template_outline": template_outline,
                 "template_hierarchy": template_hierarchy,
                 "template_id": template_id,
+                "readme_id": readme_id,
             }
             for state in self.graph.stream(initial_state, stream_mode="values"):
                 step_name = state.get("step")

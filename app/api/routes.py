@@ -28,6 +28,7 @@ template_index = TemplateIndex()
 logger = logging.getLogger(__name__)
 
 TEMPLATE_EXTENSIONS = {".docx", ".pdf"}
+README_EXTENSIONS = {".md", ".markdown"}
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -85,11 +86,13 @@ async def generate_paper_with_template(
     max_revisions: int = Form(2, ge=1, le=5),
     user_id: str = Form("default", min_length=1, max_length=128),
     file: UploadFile | None = File(None, description="docx / pdf 大纲模板，可选"),
+    readme_file: UploadFile | None = File(None, description="README.md，切片向量化后供写作参考，可选"),
 ) -> PaperGenerateResponse:
-    """上传模板生成论文：模板大纲优先，未上传时使用默认大纲。"""
+    """上传模板 / README 生成论文：模板大纲优先，未上传时使用默认大纲。"""
     template_outline: list[str] | None = None
     template_hierarchy: list[dict] | None = None
     template_id: str | None = None
+    readme_id: str | None = None
     if file is not None:
         filename, content = await _read_template_content(file)
         template_outline, template_hierarchy = _parse_template(filename, content)
@@ -101,6 +104,9 @@ async def generate_paper_with_template(
             template_outline,
         )
         template_id = _index_template(filename, content, user_id=user_id)
+    if readme_file is not None:
+        readme_filename, readme_content = await _read_readme_content(readme_file)
+        readme_id = _index_template(readme_filename, readme_content, user_id=user_id)
     try:
         result = assistant.generate(
             topic,
@@ -108,6 +114,7 @@ async def generate_paper_with_template(
             template_outline=template_outline,
             template_hierarchy=template_hierarchy,
             template_id=template_id,
+            readme_id=readme_id,
             user_id=user_id,
         )
     except PaperBusyError as exc:
@@ -157,6 +164,17 @@ async def _read_template_content(file: UploadFile) -> tuple[str, bytes]:
         return filename, await file.read()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"模板读取失败：{exc}") from exc
+
+
+async def _read_readme_content(file: UploadFile) -> tuple[str, bytes]:
+    """校验并一次性读取上传的 README，返回 (文件名, 文件内容)。"""
+    filename = file.filename or ""
+    if Path(filename).suffix.lower() not in README_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="仅支持 .md / .markdown 格式的 README 文件")
+    try:
+        return filename, await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"README 读取失败：{exc}") from exc
 
 
 def _parse_template(filename: str, content: bytes) -> tuple[list[str], list[dict]]:

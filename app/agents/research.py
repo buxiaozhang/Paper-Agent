@@ -43,6 +43,7 @@ class WriterAgent(BaseAgent):
         subsections: list[str] | None = None,
         references: list[str] | None = None,
         template_examples: list[str] | None = None,
+        readme_examples: list[str] | None = None,
     ) -> str:
         """生成单个章节的正文。
 
@@ -52,6 +53,8 @@ class WriterAgent(BaseAgent):
             subsections: 本节参考下级标题（写作提示，内容应覆盖这些要点）。
             template_examples: 从向量库检索到的模板相近章节片段（仅借鉴
                 结构、措辞风格与论证思路，不得照抄）。
+            readme_examples: 从向量库检索到的 README 背景/需求片段（结合
+                主题组织进论文，用作项目背景与功能点依据，不得照抄原文）。
         """
         # 学术写作助手
         prompt = (
@@ -76,6 +79,16 @@ class WriterAgent(BaseAgent):
                 "\n以下是与本章节内容相近的模板写法片段（仅借鉴其结构、"
                 "措辞风格与论证思路，内容必须围绕本论文主题原创，严禁照抄原文）：\n"
                 f"{examples_text}"
+            )
+        if readme_examples:
+            readme_text = "\n\n".join(
+                f"【README 参考 {i}】{example[:800]}"
+                for i, example in enumerate(readme_examples, 1)
+            )
+            prompt += (
+                "\n以下是从项目 README 中检索到的背景/需求片段（请据此组织项目背景、"
+                "功能点与技术要求，用论文语言表达，严禁照抄原文）：\n"
+                f"{readme_text}"
             )
         response = self.llm.invoke(prompt)
         return str(response.content)

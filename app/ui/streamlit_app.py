@@ -87,43 +87,48 @@ def _render_paper(paper: dict) -> None:
         f"状态：{paper.get('status')} ｜ 生成时间：{_fmt_time(paper.get('created_at'))}"
     )
     if paper.get("outline"):
-        st.markdown("**大纲**：")
+        st.markdown("**大纲**（点击章节展开/收缩）：")
         for item in paper["outline"]:
-            st.markdown(f"- {item.get('title', '')}")
-            for sub in item.get("subsections", []):
-                if isinstance(sub, dict):
-                    st.markdown(f"    - {sub.get('title', '')}")
-                    for subsub in sub.get("subsections", []):
-                        st.markdown(f"        - {subsub}")
-                else:
-                    st.markdown(f"    - {sub}")
+            with st.expander(item.get("title", ""), expanded=False):
+                for sub in item.get("subsections", []):
+                    if isinstance(sub, dict):
+                        st.markdown(f"- {sub.get('title', '')}")
+                        for subsub in sub.get("subsections", []):
+                            st.markdown(f"    - {subsub}")
+                    else:
+                        st.markdown(f"- {sub}")
     for section in paper.get("sections", []):
         with st.expander(f"{section['title']}（摘要：{(section.get('summary') or '')[:80]}）"):
             st.markdown(section["content"])
 
 
 def _wait_for_progress(user_id: str, topic: str) -> dict | None:
-    """轮询 Redis 进度直至任务结束，返回最终进度负载。"""
-    progress_bar = st.progress(0, text="等待任务进度…")
-    last_percent = -1
-    while True:
-        payload = memory.get_progress(user_id, topic)
-        if payload:
-            if _is_stale(payload):
-                memory.delete(progress_key(user_id, topic))
-                memory.release_lock(lock_key(user_id))
-                st.warning("检测到失效任务（可能因服务重启中断），已清理，可重新生成")
-                return None
-            percent = int(payload.get("percent", 0))
-            step = payload.get("step", "")
-            if percent != last_percent:
-                progress_bar.progress(percent / 100, text=f"{step}（{percent}%）")
-                last_percent = percent
-            if payload.get("status") in ("done", "error"):
-                progress_bar.progress(1.0 if payload["status"] == "done" else 0.0,
-                                      text=f"{step}（{payload['status']}）")
-                return payload
-        time.sleep(0.5)
+    """轮询 Redis 进度直至任务结束，返回最终进度负载（转圈 + 百分比进度条）。"""
+    with st.status("正在恢复任务进度…", expanded=True) as status:
+        progress_bar = status.progress(0.0, text="等待任务进度 · 0%")
+        last_percent = -1
+        while True:
+            payload = memory.get_progress(user_id, topic)
+            if payload:
+                if _is_stale(payload):
+                    memory.delete(progress_key(user_id, topic))
+                    memory.release_lock(lock_key(user_id))
+                    status.update(label="任务已失效（可能因服务重启中断）", state="error", expanded=True)
+                    st.warning("检测到失效任务，已清理，可重新生成")
+                    return None
+                percent = int(payload.get("percent", 0))
+                step = payload.get("step", "")
+                if percent != last_percent:
+                    progress_bar.progress(percent / 100, text=f"{step} · {percent}%")
+                    last_percent = percent
+                if payload.get("status") in ("done", "error"):
+                    if payload.get("status") == "done":
+                        progress_bar.progress(1.0, text="生成完成 · 100%")
+                        status.update(label="生成完成", state="complete", expanded=False)
+                    else:
+                        status.update(label="生成失败", state="error", expanded=True)
+                    return payload
+            time.sleep(0.5)
 
 
 def _load_and_render(paper_id: int) -> None:
@@ -200,25 +205,26 @@ else:
             template_hierarchy = st.session_state.get("template_hierarchy_cache")
             template_id = st.session_state.get("template_id_cache")
         else:
-            try:
-                template_outline = extract_outline(uploaded_template.name, content)
-                template_hierarchy = extract_outline_structure(uploaded_template.name, content)
-                st.success(f"已从模板提取 {len(template_outline)} 个一级章节：")
+            with st.spinner("正在解析并向量化模板…"):
                 try:
-                    index_result = template_index.index_template(
-                        uploaded_template.name, content, user_id=user_id
-                    )
-                    template_id = index_result.template_id
-                    st.info(
-                        f"模板已切片写入向量库（{index_result.chunk_count} 个片段），"
-                        "写作时将参考模板写法"
-                    )
-                except Exception as exc:
-                    st.warning(f"模板向量化失败（不影响生成，但不提供模板写法参考）：{exc}")
-            except Exception:
-                template_outline = None
-                template_hierarchy = None
-                st.error("模板解析失败，本次生成将使用默认大纲")
+                    template_outline = extract_outline(uploaded_template.name, content)
+                    template_hierarchy = extract_outline_structure(uploaded_template.name, content)
+                    st.success(f"已从模板提取 {len(template_outline)} 个一级章节：")
+                    try:
+                        index_result = template_index.index_template(
+                            uploaded_template.name, content, user_id=user_id
+                        )
+                        template_id = index_result.template_id
+                        st.info(
+                            f"模板已切片写入向量库（{index_result.chunk_count} 个片段），"
+                            "写作时将参考模板写法"
+                        )
+                    except Exception as exc:
+                        st.warning(f"模板向量化失败（不影响生成，但不提供模板写法参考）：{exc}")
+                except Exception:
+                    template_outline = None
+                    template_hierarchy = None
+                    st.error("模板解析失败，本次生成将使用默认大纲")
             st.session_state["template_cache_key"] = cache_key
             st.session_state["template_outline_cache"] = template_outline
             st.session_state["template_hierarchy_cache"] = template_hierarchy
@@ -235,6 +241,36 @@ else:
                     prefix = "- "
                 preview.append(f"{prefix}{item.get('title', '')}")
             st.caption("\n".join(preview))
+
+    uploaded_readme = st.file_uploader(
+        "上传项目说明（README.md，可选；切片向量化后供写作参考）",
+        type=["md", "markdown"],
+    )
+    readme_id: str | None = None
+    if uploaded_readme is not None:
+        readme_content = uploaded_readme.getvalue()
+        readme_cache_key = f"{uploaded_readme.name}:{hashlib.sha256(readme_content).hexdigest()[:12]}"
+        if st.session_state.get("readme_cache_key") == readme_cache_key:
+            readme_id = st.session_state.get("readme_id_cache")
+        else:
+            with st.spinner("正在切片并向量化 README…"):
+                try:
+                    result = template_index.index_template(
+                        uploaded_readme.name, readme_content, user_id=user_id
+                    )
+                    readme_id = result.template_id
+                    if result.chunk_count:
+                        st.info(
+                            f"README 已切片写入向量库（{result.chunk_count} 个片段），"
+                            "写作时将参考项目背景与需求"
+                        )
+                    else:
+                        st.warning("README 未切分出可索引的内容")
+                except Exception as exc:
+                    readme_id = None
+                    st.warning(f"README 向量化失败（不影响生成，但不提供项目背景参考）：{exc}")
+            st.session_state["readme_cache_key"] = readme_cache_key
+            st.session_state["readme_id_cache"] = readme_id
 
     # ---------- 刷新恢复：仅跟踪进行中的任务；历史完成内容不自动展示 ----------
     active = memory.find_active_progress(user_id)
@@ -265,6 +301,7 @@ else:
                     template_outline=template_outline,
                     template_hierarchy=template_hierarchy,
                     template_id=template_id,
+                    readme_id=readme_id,
                     user_id=user_id,
                 )
             except Exception as exc:
@@ -274,23 +311,32 @@ else:
 
         threading.Thread(target=_run, daemon=True).start()
 
-        progress_bar = st.progress(0, text="准备开始…")
-        last_percent = -1
-        final = None
-        while True:
-            payload = memory.get_progress(user_id, topic)
-            if payload and not _is_stale(payload):
-                percent = int(payload.get("percent", 0))
-                step = payload.get("step", "")
-                if percent != last_percent:
-                    progress_bar.progress(percent / 100, text=f"{step}（{percent}%）")
-                    last_percent = percent
-                if payload.get("status") in ("done", "error"):
-                    final = payload
-                    break
+        with st.status("正在生成论文…", expanded=True) as status:
+            progress_bar = status.progress(0.0, text="准备开始 · 0%")
+            last_percent = -1
+            final = None
+            while True:
+                payload = memory.get_progress(user_id, topic)
+                if payload and not _is_stale(payload):
+                    percent = int(payload.get("percent", 0))
+                    step = payload.get("step", "")
+                    if percent != last_percent:
+                        progress_bar.progress(percent / 100, text=f"{step} · {percent}%")
+                        last_percent = percent
+                    if payload.get("status") in ("done", "error"):
+                        final = payload
+                        break
+                elif thread_done["done"]:
+                    break  # 线程已结束但未写入进度（如并发冲突被拒绝）
+                time.sleep(0.5)
+
+            if final and final.get("status") == "done":
+                progress_bar.progress(1.0, text="生成完成 · 100%")
+                status.update(label="生成完成", state="complete", expanded=False)
+            elif final and final.get("status") == "error":
+                status.update(label="生成失败", state="error", expanded=True)
             elif thread_done["done"]:
-                break  # 线程已结束但未写入进度（如并发冲突被拒绝）
-            time.sleep(0.5)
+                status.update(label="生成任务异常结束", state="error", expanded=True)
 
         if isinstance(thread_error["error"], PaperBusyError):
             st.warning(str(thread_error["error"]))

@@ -95,21 +95,32 @@ def build_graph(
         subsections_map = state.get("section_subsections") or {}
         revision = state.get("revision_count", 0) + 1
         template_id = state.get("template_id")
+        readme_id = state.get("readme_id")
         logger.info("节点开始：论文撰写（第 %d 轮，章节数：%d）", revision, len(sections))
         parts, texts, summaries = [], [], {}
         for section_index, section in enumerate(sections, 1):
             subsections = subsections_map.get(section) or []
             template_examples: list[str] = []
-            if template_index is not None and template_id:
-                # 用「主题 + 章节 + 下级标题」检索模板写法参考
+            readme_examples: list[str] = []
+            if template_index is not None:
+                # 用「主题 + 章节 + 下级标题」检索模板写法 / README 项目背景参考
                 subsection_titles = flatten_subsection_titles(subsections)
                 query = " ".join(filter(None, [topic, section, *subsection_titles[:8]]))
-                template_examples = template_index.search(template_id, query)
+                if template_id:
+                    template_examples = template_index.search(template_id, query)
+                if readme_id:
+                    readme_examples = template_index.search(readme_id, query)
                 if template_examples:
                     logger.info(
                         "章节「%s」检索到 %d 条模板写法参考",
                         section,
                         len(template_examples),
+                    )
+                if readme_examples:
+                    logger.info(
+                        "章节「%s」检索到 %d 条 README 参考",
+                        section,
+                        len(readme_examples),
                     )
             # 渲染带编号的下级标题，作为写作提示
             writer_subsections = render_subsections(section_index, subsections)
@@ -122,6 +133,7 @@ def build_graph(
                 writer_subsections,
                 references,
                 template_examples=template_examples,
+                readme_examples=readme_examples,
 
             )
             texts.append(text)

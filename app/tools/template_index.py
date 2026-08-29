@@ -2,11 +2,13 @@
 
 - docx：按段落样式 / 编号识别一级、二级标题，把每个小节正文切为独立片段；
 - pdf：按正文行提取，同样识别编号标题，超长内容按固定大小切分并保留重叠；
+- markdown（README.md 等）：按 #/##/### 标题层级切分正文；
 - 索引以模板内容哈希为 template_id 去重，重新上传同一模板会先清理旧切片。
 """
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -111,12 +113,39 @@ class TemplateIndex:
 
 
 # ---------- 切片实现 ----------
+_MD_HEADING = re.compile(r"^(#{1,6})\s*(.*)$")
+
+
 def chunk_template(filename: str, content: bytes) -> list[dict]:
-    """把模板正文按标题结构切分为 [{text, level1, level2, chunk_index}]。"""
+    """把模板正文按标题结构切分为 [{text, level1, level2, chunk_index}]。
+
+    支持 docx / pdf / markdown（README 等）；markdown 按 #/##/### 标题层级切分。
+    """
     suffix = Path(filename or "").suffix.lower()
     if suffix == ".pdf":
         return _chunks_from_rows([("", line.strip()) for line in _pdf_lines(content)])
+    if suffix in (".md", ".markdown"):
+        return _chunks_from_rows(_markdown_rows(content))
     return _chunks_from_rows(_docx_rows(content))
+
+
+def _markdown_rows(content: bytes) -> list[tuple[str, str]]:
+    """把 Markdown 文本按标题/正文行拆为 (样式, 文本) 行，复用统一切分逻辑。"""
+    text = content.decode("utf-8", errors="ignore")
+    rows: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _MD_HEADING.match(stripped)
+        if match:
+            level = min(len(match.group(1)), 3)
+            body = match.group(2).strip()
+            if body:
+                rows.append((f"Heading {level}", body))
+        else:
+            rows.append(("", stripped))
+    return rows
 
 
 def _docx_rows(content: bytes) -> list[tuple[str, str]]:
